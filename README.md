@@ -29,32 +29,43 @@ No analyst estimates, no price targets, no buy/sell verdicts — see
 
 ## Quick start
 
+Three commands to a working site:
+
 ```bash
-pip install -r requirements.txt -r requirements-web.txt
+pip install -r requirements.txt
+python worker.py --seed                 # demo data — no network, no SEC key
+streamlit run streamlit_app.py          # http://localhost:8501
+```
 
-# Demo data — no network needed
-python worker.py --seed
+For real filings instead of the demo set (SEC requires a real name and email):
 
-# Or real filings (SEC requires a real name and email)
+```bash
 export EDGAR_USER_AGENT="Your Name you@email.com"
 python worker.py AAPL MSFT NVDA MU     # specific tickers
 python worker.py --sp500               # S&P 500 constituents
 python worker.py --universe            # whole US market (~1.5 GB first run)
 ```
 
-Then start the API and the site:
+Single-company analysis with no web stack at all:
 
 ```bash
+python run.py MU                        # console summary + HTML tearsheet
+python run.py AAPL MSFT NVDA            # ranked screen dashboard
+```
+
+<details>
+<summary>Or the JSON API + Next.js frontend instead of Streamlit</summary>
+
+Streamlit and the API/Next.js stack read the same database and are
+interchangeable. Use the API stack if you want JSON endpoints other things can
+call; see [`WEB.md`](WEB.md).
+
+```bash
+pip install -r requirements-web.txt
 uvicorn finmodel.web.api:app --port 8000
 cd web && npm install && npm run dev     # http://localhost:3000
 ```
-
-Single-company analysis without the web stack:
-
-```bash
-python run.py MU                 # console summary + HTML tearsheet
-python run.py AAPL MSFT NVDA     # ranked screen dashboard
-```
+</details>
 
 Everything in one command:
 
@@ -76,14 +87,16 @@ docker compose run --rm api python worker.py --seed
             ┌──────────────┐
             │  PostgreSQL  │  companies · history · market_data · sector_benchmarks
             └──────┬───────┘
-                   ▼
-            ┌──────────────┐
-            │   FastAPI    │  read-only, rate-limited, CORS-scoped
-            └──────┬───────┘
-                   ▼
-            ┌──────────────┐
-            │   Next.js    │  server components; browser never sees the API host
-            └──────────────┘
+                   │
+        ┌──────────┴───────────┐     two interchangeable front ends,
+        ▼                      ▼     both read-only
+┌───────────────┐      ┌──────────────┐
+│   Streamlit   │      │   FastAPI    │  rate-limited, CORS-scoped
+│ one process,  │      └──────┬───────┘
+│ no API layer  │             ▼
+└───────────────┘      ┌──────────────┐
+                       │   Next.js    │  browser never sees the API host
+                       └──────────────┘
 ```
 
 **Nothing fetches on request.** SEC rate-limits to roughly 10 requests/second
@@ -133,7 +146,8 @@ buy/sell language appears outside the disclaimer.
 
 | File | Contents |
 |---|---|
-| [`WEB.md`](WEB.md) | Web stack, API reference, deployment |
+| [`STREAMLIT.md`](STREAMLIT.md) | Streamlit app: run locally, deploy, troubleshoot |
+| [`WEB.md`](WEB.md) | JSON API + Next.js stack, API reference, deployment |
 | [`QUICKSTART.md`](QUICKSTART.md) | Plain-English setup and troubleshooting |
 | [`docs/MODELS.md`](docs/MODELS.md) | Every model, parameter and formula |
 | [`CLAUDE.md`](CLAUDE.md) | Architecture notes and deliberate design decisions |
@@ -144,7 +158,8 @@ buy/sell language appears outside the disclaimer.
 
 ```bash
 for t in test_pipeline test_capm test_dcf test_quant test_stoch \
-         test_foundation test_screener test_web test_valuation; do
+         test_foundation test_screener test_web test_valuation \
+         test_streamlit; do
   python -W ignore $t.py
 done
 ```

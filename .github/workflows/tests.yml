@@ -26,14 +26,18 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-web.txt
+          # requirements.txt is the superset (core + web + streamlit), so this
+          # installs exactly what a deployment gets. Installing the narrower
+          # sets here would let an undeclared dependency pass CI.
+          pip install -r requirements.txt
           pip install httpx
 
       - name: Run all suites
         run: |
           set -e
           for t in test_pipeline test_capm test_dcf test_quant test_stoch \
-                   test_foundation test_screener test_web test_valuation; do
+                   test_foundation test_screener test_web test_valuation \
+                   test_streamlit; do
             echo "::group::$t"
             python -W ignore $t.py
             echo "::endgroup::"

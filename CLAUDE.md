@@ -162,3 +162,42 @@ GARCH(1,1) volatility, pairs trading / cointegration (Engle-Granger), ML
 (Almgren-Chriss). Heston has an MC pricer; a Fourier/characteristic-function
 version and HJM rates are also open. These plug into `Universe` and `FactorModel` and feed the
 eventual long/short portfolio model.
+
+## Streamlit app (streamlit_app.py + views/)
+
+```
+streamlit_app.py       entry point: st.set_page_config + st.navigation ONLY
+views/screener.py      filter/sort/rank the universe
+views/company.py       statements, peer comparison, research note
+views/portfolio.py     build under constraints, or assess existing holdings
+views/methodology.py   thresholds, formulas, limitations
+finmodel/web/ui.py     cached DB reads, formatting, the licensing gate, footer
+```
+
+Run it: `streamlit run streamlit_app.py`. Tested by `test_streamlit.py`
+(offline, via Streamlit's AppTest harness).
+
+- **Navigation is declared, not discovered.** `st.navigation` in the entry
+  point, with explicit `url_path` per page. There is no `pages/` directory:
+  that convention derives sidebar labels from filenames ("streamlit app") and
+  URL paths that change when a file is renamed.
+- **`st.set_page_config` belongs to the entry point only.** Calling it from a
+  view under `st.navigation` raises. Views set no page config.
+- **Every DB read in ui.py is cached** — `@st.cache_resource` for the
+  connection, `@st.cache_data` with a TTL for queries. Streamlit re-runs the
+  whole script on every widget interaction, so an uncached query runs again on
+  every click. `clear_caches()` is wired to the sidebar's Refresh button.
+- **Caches persist across AppTest runs in one process.** Any test that changes
+  the database or flips `SERVE_MARKET_DATA` must call `ui.clear_caches()`, or
+  it replays the previous phase's result and silently passes.
+- **Sliders that mean percentages hold integers**, not 0-1 fractions. A
+  `"%d%%"` format on 0.35 renders as "0%" — this shipped once.
+- **`assess_portfolio` takes `{ticker: weight}`**, not a list of dicts.
+- **The same licensing gate as the API**: `ui.strip_market()` and the
+  `PRICE_DERIVED_METRICS` filters. SEC data is public domain and
+  republishable; scraped price data is not. Off by default, and the footer
+  says so.
+- **requirements.txt is the superset** (core + web + streamlit) because
+  Streamlit Cloud only reads that filename. `requirements-core.txt` is the
+  models alone; `requirements-web.txt` adds FastAPI. CI installs the superset
+  so an undeclared dependency cannot pass.

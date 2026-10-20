@@ -8,6 +8,9 @@
 .env.*.local
 *.pem
 *.key
+# Streamlit secrets: EDGAR_USER_AGENT, DATABASE_URL. .streamlit/config.toml IS
+# committed; only the secrets file is excluded.
+.streamlit/secrets.toml
 
 # ---------------------------------------------------------------------------
 # Data — regenerable, and large

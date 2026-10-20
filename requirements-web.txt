@@ -1,3 +1,7 @@
+# The read-only JSON API (finmodel/web/api.py), for serving the Next.js
+# frontend. Not needed if you only run the Streamlit app.
+-r requirements-core.txt
+
 fastapi>=0.110
 uvicorn[standard]>=0.27
 psycopg2-binary>=2.9
