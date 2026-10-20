@@ -1,0 +1,70 @@
+# ---------------------------------------------------------------------------
+# Secrets and local identity — NEVER commit these
+# ---------------------------------------------------------------------------
+# Holds the name + email sent to SEC as a User-Agent. Personal data.
+.finmodel_config
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ---------------------------------------------------------------------------
+# Data — regenerable, and large
+# ---------------------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+finmodel_web.db
+universe.db
+# SEC bulk dataset (~1.5 GB) and the per-company cache
+.finmodel_cache/
+.finmodel_bulk/
+*.companyfacts.json
+companyfacts.zip
+submissions.zip
+
+# Generated reports
+reports/
+*.html
+!web/**/*.html
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+venv/
+.venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ---------------------------------------------------------------------------
+# Node / Next.js
+# ---------------------------------------------------------------------------
+node_modules/
+.next/
+out/
+.turbo/
+next-env.d.ts
+.vercel
+*.tsbuildinfo
+
+# ---------------------------------------------------------------------------
+# Editors and OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

@@ -1,0 +1,91 @@
+name: refresh data
+
+# Scheduled worker. Filings move slowly, so daily is ample.
+#
+# Required repository secrets:
+#   EDGAR_USER_AGENT   "Your Name you@email.com"  (SEC blocks anonymous traffic)
+#   DATABASE_URL       postgresql://...           (your managed Postgres)
+#
+# Set them under Settings -> Secrets and variables -> Actions.
+# Do NOT put either value in this file: workflow files are readable by anyone
+# who can see the repo.
+
+on:
+  schedule:
+    # 06:30 UTC daily. Avoids the exact hour, when Actions queues are busiest.
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "What to load"
+        required: true
+        default: "sp500"
+        type: choice
+        options: [sp500, universe, seed]
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # The full-market pass streams a 1.5 GB download; give it room.
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-web.txt yfinance
+
+      - name: Check required secrets are present
+        env:
+          EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$EDGAR_USER_AGENT" ]; then
+            echo "::error::EDGAR_USER_AGENT secret is not set. SEC blocks requests without a real name and email."
+            exit 1
+          fi
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL secret is not set."
+            exit 1
+          fi
+          echo "Secrets present."
+
+      - name: Load data
+        env:
+          EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          MODE="${{ github.event.inputs.mode || 'sp500' }}"
+          echo "Running worker in '$MODE' mode"
+          case "$MODE" in
+            sp500)    python worker.py --sp500 ;;
+            universe) python worker.py --universe ;;
+            seed)     python worker.py --seed ;;
+          esac
+
+      - name: Summary
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import os
+          from finmodel.web.store import Database
+          try:
+              s = Database().stats()
+              print("## Data refresh\n")
+              print(f"- Companies: **{s['companies']}**")
+              print(f"- Passing default screen: **{s['passing'] or 0}**")
+              print(f"- Sectors: **{s['sectors']}**")
+              print(f"- Latest fiscal year: **{s['latest_year']}**")
+              print(f"- With price data: **{s['priced']}**")
+          except Exception as e:
+              print(f"Could not read stats: {e}")
+          PY

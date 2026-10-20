@@ -1,0 +1,4 @@
+requests>=2.28
+pandas>=1.5
+numpy>=1.23
+yfinance>=0.2   # price feed for CAPM/beta (swappable)

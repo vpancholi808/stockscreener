@@ -1,0 +1,58 @@
+# Local full stack: Postgres + API + Next.js
+#
+#   docker compose up --build
+#   docker compose run --rm api python worker.py --seed      # demo data
+#   docker compose run --rm api python worker.py --universe  # real market data
+#
+# Then open http://localhost:3000
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: finmodel
+      POSTGRES_PASSWORD: finmodel
+      POSTGRES_DB: finmodel
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finmodel"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      DATABASE_URL: postgresql://finmodel:finmodel@db:5432/finmodel
+      # SEC filings are public domain and safe to republish.
+      # Scraped price data generally is NOT — leave false unless you have
+      # switched to a feed whose licence permits redistribution.
+      SERVE_MARKET_DATA: "false"
+      RATE_LIMIT_PER_MIN: "120"
+      ALLOWED_ORIGINS: "http://localhost:3000"
+      EDGAR_USER_AGENT: "${EDGAR_USER_AGENT}"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - bulkdata:/root/.finmodel_bulk
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    environment:
+      API_BASE: http://api:8000
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
+  bulkdata:
