@@ -18,4 +18,9 @@ gatherUsageStats = false
 [client]
 # Show errors in the browser rather than only in the server log — on a hosted
 # deployment the log is the one thing you cannot see from the page.
+#
+# This leaks tracebacks and file paths to anyone who visits. That is an
+# acceptable trade here because the repository is public, so the code those
+# traces point at is already readable. Set this to false if the repo ever goes
+# private, or once the deployment is stable enough not to need it.
 showErrorDetails = true
