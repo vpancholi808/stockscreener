@@ -48,10 +48,74 @@ jobs:
           # logs of a public repository are readable by anyone.
           echo "Secret is set (contact domain: ${EDGAR_USER_AGENT##*@})"
 
-      - name: Pull live SEC data
+      - name: Probe each layer separately
         env:
           EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
-        run: python check_edgar.py ${{ github.event.inputs.tickers || 'MU AAPL' }}
+        run: |
+          # Results are emitted as ::notice:: / ::error:: workflow commands so
+          # they land in the run's annotations, which are readable through the
+          # API. Printing to stdout alone puts them only in the log archive.
+          # Nothing here echoes the secret: only status codes and exception
+          # text, never the User-Agent value.
+          python - <<'PY'
+          import os, sys, traceback
+          ua = os.environ["EDGAR_USER_AGENT"]
+          failed = []
+
+          def note(name, detail):
+              print("::notice::PROBE %s | %s" % (name, detail))
+
+          def fail(name, detail):
+              failed.append(name)
+              print("::error::PROBE %s FAILED | %s" % (name, str(detail)[:400]))
+
+          # 1. Can this runner reach SEC at all, with a proper User-Agent?
+          try:
+              import requests
+              r = requests.get("https://www.sec.gov/files/company_tickers.json",
+                               headers={"User-Agent": ua}, timeout=30)
+              note("1-raw-https", "HTTP %d, %d bytes, server=%s"
+                   % (r.status_code, len(r.content),
+                      r.headers.get("server", "?")))
+              if r.status_code != 200:
+                  fail("1-raw-https", "body starts: %r" % r.text[:200])
+          except Exception as exc:
+              fail("1-raw-https", "%s: %s" % (type(exc).__name__, exc))
+
+          # 2. The project's client, same endpoint.
+          try:
+              from finmodel.data.edgar import EdgarClient
+              client = EdgarClient(user_agent=ua)
+              cik = client.ticker_to_cik("MU")
+              note("2-ticker-map", "MU -> CIK %010d" % cik)
+          except Exception as exc:
+              fail("2-ticker-map", "%s: %s" % (type(exc).__name__, exc))
+
+          # 3. data.sec.gov is a different host and can be blocked separately.
+          try:
+              facts = client.company_facts("MU")
+              note("3-companyfacts", "%s, %d us-gaap concepts"
+                   % (facts.get("entityName", "?"),
+                      len(facts.get("facts", {}).get("us-gaap", {}))))
+          except Exception as exc:
+              fail("3-companyfacts", "%s: %s" % (type(exc).__name__, exc))
+
+          # 4. The full path a real run takes.
+          try:
+              from finmodel import ThreeStatementModel
+              model = ThreeStatementModel.from_ticker("MU", n_years=5)
+              fin = model.financials
+              year = fin.latest_year()
+              note("4-model", "%s FY%s revenue $%.2fB"
+                   % (fin.entity_name[:30], year,
+                      fin.income_statement.at["revenue", year] / 1e9))
+          except Exception as exc:
+              fail("4-model", "%s: %s" % (type(exc).__name__, exc))
+              traceback.print_exc()
+
+          print("::notice::SUMMARY failed=%s" % (",".join(failed) or "none"))
+          sys.exit(1 if failed else 0)
+          PY
 
       - name: Build a real model end to end
         env:
