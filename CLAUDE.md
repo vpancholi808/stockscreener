@@ -48,6 +48,8 @@ finmodel/
   research.py          evidence-based research notes (NO buy/sell verdict, by design)
   portfolio_builder.py strategies x risk profiles -> constrained allocation + assessment
   data/sp500.py        S&P 500 constituents (fetched + cached; no stale hardcoded list)
+  data/profiles.py     Yahoo per-ticker profiles: forward P/E, analyst targets,
+                       52-week range (bounded universes only)
   data/yahoo.py        hardened price import: shape normalisation, vintage-stamped
                        cache, coverage report, bad-print audit (audit_prices)
   returns.py           return distribution: both annualizations, JB, tail counts,
@@ -287,3 +289,53 @@ corrections that moving from teaching code to production requires. Tested by
 - **The parser correctly ignores the `fy` label and uses period end dates.**
   Micron's FY2026 10-K tags the prior year (2024-08-30..2025-08-28) as both
   fy2025 and fy2026. Trusting `fy` would silently pick the comparative.
+
+## S&P 500 focus and Yahoo profiles (data/profiles.py)
+
+The project's primary universe is the S&P 500. `worker.py --sp500` is the
+main path; `--universe` still works for whole-market sweeps but skips the
+profile pass.
+
+- **`.info` is affordable at 500 names and not at 8,000.** `market.py` never
+  calls it, and that rule is right *for the whole market*: one HTTP round
+  trip per ticker is hours across ~8,000 filers. Measured on a GitHub runner
+  it returns in 0.2-0.5s, so the S&P 500 costs about four minutes.
+  `data/profiles.py` exists only for a bounded universe and raises above
+  `MAX_REASONABLE` (1,200) unless `allow_large=True`. Do not reach for it in
+  whole-market code.
+- **Forward P/E now has a source.** `valuation.py` leaves `forward_pe` empty
+  because analyst consensus is not in SEC filings. Yahoo has it, along with
+  forward EPS, PEG, payout ratio, price targets and the 52-week range.
+- **GICS sectors beat SIC-derived ones for this index.** The constituent list
+  carries `gics_sector` and `cik`, so `--sp500` uses them directly.
+  `compare_sectors` reports where Yahoo disagrees with ours — neither is
+  authoritative, but a misclassified company is benchmarked against the wrong
+  peers and that is invisible in the output.
+- **Yahoo's dividendYield scale is not stable across versions.** Current
+  releases report a percent (0.32 meaning 0.32%); older ones reported a
+  fraction. `_dividend_yield` derives the scale from `dividendRate / price`
+  rather than assuming either, because hard-coding one eventually tells a
+  user that Apple yields 32%.
+- **`upsert_market` writes only the columns supplied.** Prices arrive from
+  `attach_valuation` and profile fields from `attach_profiles`, so a full-row
+  write makes whichever runs second blank the other with None. It now uses
+  ON CONFLICT DO UPDATE on the supplied columns; `INSERT OR REPLACE` deletes
+  the row first and reverts every unlisted column to its default. The failure
+  was silent — row present, page rendering, numbers gone — so `test_profiles.py`
+  writes two partial passes and asserts both survive.
+- **Everything from profiles is behind SERVE_MARKET_DATA.** It is scraped
+  vendor data, in the same licensing position as the price fields.
+
+### Validating against real data
+
+`validate_real_data.py` checks a loaded database rather than the models:
+coverage per metric, plausibility ranges wide enough to catch a unit error
+without second-guessing the market, benchmark sanity, scorecard pass rates by
+sector, research notes, portfolio construction, and that every Streamlit page
+renders. Thresholds come from `EXPECT_MIN_COMPANIES` / `EXPECT_MIN_FORWARD_PE`
+so a `--limit` smoke run is a legitimate use.
+
+`.github/workflows/sp500-real-data.yml` runs the whole thing on live data into
+throwaway SQLite. It is the only place the real pipeline executes: the
+development sandbox reaches neither SEC nor Yahoo. Smoke-test with a small
+`limit` before the full ~503-name run.
