@@ -25,10 +25,18 @@ on:
         required: false
         default: "no"
 
+permissions:
+  contents: write      # commit the generated site back to the repo
+  pages: write         # publish it
+  id-token: write      # required by actions/deploy-pages
+
 jobs:
   load:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
 
     steps:
       - uses: actions/checkout@v4
@@ -147,6 +155,56 @@ jobs:
                   r.sector, r.n, r.passing or 0,
                   f(r.om, "%.1f%%", 100), f(r.roic, "%.1f%%", 100)))
           PY
+
+      - name: Build the static site
+        env:
+          DATABASE_URL: sqlite:///sp500.db
+          # Deliberately NOT set: a public page carries only SEC data, which
+          # is US government work and in the public domain. Scraped price
+          # data generally is not redistributable.
+        run: |
+          python build_site.py --out site/index.html \
+            --title "S&P 500 Equity Health Screener"
+          cp site/index.html site/404.html
+          ls -la site/
+
+      - name: Commit the site to the repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f site/index.html
+          git diff --cached --quiet && echo "site unchanged" && exit 0
+          git commit -m "Rebuild site from real S&P 500 data [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+      - uses: actions/configure-pages@v5
+        id: configure
+        continue-on-error: true
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        continue-on-error: true
+        with:
+          path: site
+
+      - uses: actions/deploy-pages@v4
+        id: pages
+        continue-on-error: true
+
+      - name: Where the site went
+        if: always()
+        run: |
+          echo "### Site" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${{ steps.pages.outputs.page_url }}" ]; then
+            echo "Published: ${{ steps.pages.outputs.page_url }}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "GitHub Pages is not enabled for this repository yet." >> "$GITHUB_STEP_SUMMARY"
+            echo "Settings -> Pages -> Source: GitHub Actions." >> "$GITHUB_STEP_SUMMARY"
+            echo "The page is committed at site/index.html regardless." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - uses: actions/upload-artifact@v4
         if: always()

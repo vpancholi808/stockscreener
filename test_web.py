@@ -1,4 +1,5 @@
 """Validate the web data layer: store round-trip, filters, sector ranking, API gating."""
+import json
 import sys, os, tempfile, warnings
 sys.path.insert(0, "/home/claude/finmodel")
 warnings.filterwarnings("ignore")
@@ -118,6 +119,69 @@ check("meta exposes thresholds", "scorecard_thresholds" in r.json()
       and len(r.json()["scorecard_thresholds"]) >= 10)
 check("sectors endpoint", len(client.get("/api/sectors").json()["sectors"]) >= 5)
 check("limit is capped", client.get("/api/companies?limit=9999").status_code == 422)
+
+
+
+# --------------------------------------------------------------------------
+print()
+print("=" * 64)
+print("STATIC SITE BUILDER (build_site.py)")
+print("=" * 64)
+
+import importlib
+import os as _os
+import re as _re
+
+_os.environ.pop("SERVE_MARKET_DATA", None)
+import build_site as _bs
+importlib.reload(_bs)
+
+_html = _bs.build(db, "Test Screener")
+check("site renders a full HTML document",
+      _html.startswith("<!doctype html>") and _html.rstrip().endswith("</html>"))
+check("the title is substituted", "Test Screener" in _html)
+check("no placeholder survives",
+      "__DATA__" not in _html and "__TITLE__" not in _html)
+
+_m = _re.search(r'<script id="data" type="application/json">(.*?)</script>',
+                _html, _re.S)
+check("the data block is parseable", _m is not None)
+_data = json.loads(_m.group(1).replace("<\\/", "</"))
+check("every company is embedded",
+      len(_data["companies"]) == db.stats()["companies"],
+      "%d rows" % len(_data["companies"]))
+check("history is keyed by cik as a string",
+      all(isinstance(k, str) for k in _data["history"]))
+
+# The licensing gate is the whole reason this file can be published at all.
+_leaked = sorted({f for r in _data["companies"] for f in r
+                  if f in _bs.PRICE_DERIVED})
+check("no price-derived field is embedded by default", not _leaked,
+      "leaked: %s" % _leaked if _leaked else "clean")
+check("price-derived benchmarks are excluded by default",
+      not any(b.get("price_derived")
+              for s in _data["benchmarks"].values() for b in s.values()))
+# Match contiguous markers: the licence sentence is assembled from
+# concatenated JS string literals, so "public domain" is split across them.
+check("the page states why they are missing",
+      "US government work" in _html and "redistributable" in _html)
+check("the disclaimer is present", "Not investment advice" in _html)
+check("no buy/sell verdict appears",
+      "no buy, sell or hold" in _html.lower())
+
+# A </script> inside the JSON would end the block early and break the page.
+check("closing tags inside the payload are escaped",
+      "<\\/" in _html or "</" not in _m.group(1))
+
+_os.environ["SERVE_MARKET_DATA"] = "true"
+importlib.reload(_bs)
+_html2 = _bs.build(db, "Test")
+_m2 = _re.search(r'<script id="data" type="application/json">(.*?)</script>',
+                 _html2, _re.S)
+_data2 = json.loads(_m2.group(1).replace("<\\/", "</"))
+check("the gate opens when explicitly enabled",
+      _data2["serves_market_data"] is True)
+_os.environ.pop("SERVE_MARKET_DATA", None)
 
 print("=" * 62)
 print("ALL PASSED" if not fails else "FAILURES: %s" % fails)

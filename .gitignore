@@ -34,6 +34,9 @@ submissions.zip
 reports/
 *.html
 !web/**/*.html
+# The generated static site IS committed: it is the published artefact and
+# CI rebuilds it from real data on every run.
+!site/*.html
 
 # ---------------------------------------------------------------------------
 # Python
