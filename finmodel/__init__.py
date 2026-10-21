@@ -32,5 +32,15 @@ from .quant import (Universe, MarkowitzOptimizer, Portfolio, risk_report,
                     stress_test, bs_price, bs_greeks, implied_vol, FactorModel)
 from .data.prices import (PriceFeed, YFinancePriceFeed, FramePriceFeed,
                           to_returns, periods_per_year)
+from .data.yahoo import (PriceDownload, download_prices, audit_prices,
+                         align_prices, coverage, normalize_download)
+from .returns import (DistributionReport, return_statistics, compute_returns,
+                      annualize_mean, annualize_volatility, variance_drag,
+                      jarque_bera, tail_exceedances, kurtosis_concentration,
+                      rolling_volatility, aggregation_kurtosis,
+                      infer_periods_per_year)
+from .performance import (PerformanceResult, performance_report,
+                          simulate_portfolio, xirr, xnpv, weighted_returns,
+                          contribution_to_return)
 
 __version__ = "0.1.0"

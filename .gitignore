@@ -23,6 +23,9 @@ universe.db
 # SEC bulk dataset (~1.5 GB) and the per-company cache
 .finmodel_cache/
 .finmodel_bulk/
+# Cached Yahoo price history (data.yahoo). Vintage-stamped and regenerable,
+# and the price data itself is not ours to redistribute.
+.finmodel_prices/
 *.companyfacts.json
 companyfacts.zip
 submissions.zip

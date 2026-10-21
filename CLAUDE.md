@@ -48,6 +48,11 @@ finmodel/
   research.py          evidence-based research notes (NO buy/sell verdict, by design)
   portfolio_builder.py strategies x risk profiles -> constrained allocation + assessment
   data/sp500.py        S&P 500 constituents (fetched + cached; no stale hardcoded list)
+  data/yahoo.py        hardened price import: shape normalisation, vintage-stamped
+                       cache, coverage report, bad-print audit (audit_prices)
+  returns.py           return distribution: both annualizations, JB, tail counts,
+                       rolling vol, kurtosis_concentration
+  performance.py       TWR / MWR(XIRR) with external cash flows, rebalancing
   report.py            self-contained HTML screening dashboard (dashboard_html)
   quant/universe.py    multi-ticker aligned returns panel (Universe)
   quant/factors.py     statement factors (value/quality/growth/profitability), cross-sectional z-scores
@@ -201,3 +206,58 @@ Run it: `streamlit run streamlit_app.py`. Tested by `test_streamlit.py`
   Streamlit Cloud only reads that filename. `requirements-core.txt` is the
   models alone; `requirements-web.txt` adds FastAPI. CI installs the superset
   so an undeclared dependency cannot pass.
+
+## Return statistics and performance (returns.py, performance.py, data/yahoo.py)
+
+Ported from the FINA4472 return-statistics and multi-asset notebooks, with the
+corrections that moving from teaching code to production requires. Tested by
+`test_returns.py`, `test_performance.py`, `test_yahoo.py` — all offline.
+
+- **TWR is invariant to flow size only for pro-rata contributions.** Adding
+  money in proportion to current holdings leaves the asset mix untouched, so
+  returns after the flow are unchanged and TWR measures the strategy alone —
+  which is the entire point of TWR. `contribution_weights` defaults to
+  `'pro_rata'` for that reason. `'equal'`, `'initial'` or an explicit array
+  genuinely change the mix and therefore every subsequent return; that is real
+  portfolio behaviour, not an artefact, but it does break the invariance.
+  The test suite asserts both halves.
+- **With no external flows, MWR equals annualized TWR exactly.** Asserted to
+  1e-8. If that identity ever breaks, the cash-flow signing or the day count
+  is wrong.
+- **Cash flows dated before the price history raise.** The notebook version
+  silently applied them on day one, where they are indistinguishable from the
+  opening capital and quietly inflate the capital base.
+- **XIRR returns NaN rather than a number when no root is bracketed**, and
+  `sign_changes` warns when the flows alternate more than once, because the
+  NPV equation can then have several roots.
+- **variance_drag is the Jensen gap**, `periods x (mean(r) - mean(log(1+r)))`,
+  which is non-negative by construction and is what the sigma^2/2 result
+  refers to. It is NOT the difference between the two annualized returns —
+  that can be negative, because compounding is convex (`exp(x)-1 > x`) and
+  for a high-mean low-variance series the convexity gain exceeds the drag.
+  Do not "fix" a negative annualized gap; it is arithmetic.
+- **kurtosis_concentration is the reason returns.py exists.** Excess kurtosis
+  is a fourth moment, so one 12-sigma observation contributes 20,736 where an
+  average day contributes 1. A 2,500-day sample can post excess kurtosis above
+  30 on the strength of two observations. The share of the fourth moment held
+  by the top k observations separates a genuinely fat-tailed series (share
+  spread wide) from a bad dividend adjustment (share above ~85%). Measured
+  over 40 samples of 2,512 draws: t(3) 59%, t(5) 28%, t(6) 17%, two planted
+  spikes 89%. A high share also flags distributions whose population kurtosis
+  does not exist (t with df <= 4), where the statistic is simply not estimable.
+- **Never use t(3) as a "fat tails" fixture.** Its population kurtosis is
+  infinite, so the sample statistic never converges and concentration is as
+  high as a bad print's. t(5) or t(6) have finite kurtosis and behave.
+- **Jarque-Bera is tested by its rejection RATE, not one sample.** A correctly
+  calibrated 5% test rejects 5% of true nulls, so asserting that one normal
+  draw passes is a flaky test by construction. The suite runs 400 samples and
+  checks the rate lands near 5%.
+- **audit_prices before trusting any moment.** `reversal` is the strongest
+  flag: a real crash is not undone the next day, a mis-adjusted price is,
+  almost exactly. `jump` and `sigma` alone fire on genuine crisis days too.
+- **The price cache records its vintage.** Yahoo restates history
+  retroactively, so the same request on two dates returns different numbers.
+  Keying a cache only on the date range serves a stale vintage forever without
+  saying so — the FINA4472 notebook has exactly this bug. `max_age_hours`
+  defaults to 24 and the cache key separates `auto_adjust` settings, because
+  adjusted and quoted prices must never share an entry.
