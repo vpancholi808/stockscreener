@@ -37,9 +37,12 @@ python worker.py --seed                 # demo data — no network, no SEC key
 streamlit run streamlit_app.py          # http://localhost:8501
 ```
 
-For real filings instead of the demo set (SEC requires a real name and email):
+For real filings instead of the demo set (SEC requires a real name and email —
+there is no API key and nothing to sign up for):
 
 ```bash
+python check_edgar.py                  # confirm access, diagnose it if not
+
 export EDGAR_USER_AGENT="Your Name you@email.com"
 python worker.py AAPL MSFT NVDA MU     # specific tickers
 python worker.py --sp500               # S&P 500 constituents
