@@ -132,6 +132,28 @@ The test suite enforces this: it asserts that no verdict field exists and that
 no buy/sell language appears anywhere outside the disclaimer.
 """)
 
+st.subheader("Not every metric applies to every sector")
+st.markdown("""
+Some columns are empty for some companies, and that is the honest answer
+rather than a gap in the data.
+
+- **Gross margin** requires a cost-of-revenue line. Banks, insurers and REITs
+  do not report one, because the concept does not apply to them — there is no
+  "cost" of making a loan in the way there is a cost of making a phone. Those
+  sectors show no gross margin and no gross-margin benchmark.
+- **Altman Z-score** was estimated on manufacturers. Its inputs are often
+  absent for financials, and where they exist the score is not comparable to
+  the thresholds it is famous for. Treat a missing Z for a bank as correct.
+- **Interest coverage** needs a separately reported interest expense. Many
+  filers fold it into a net financing line.
+- **Current ratio** assumes a classified balance sheet. Banks and insurers
+  present unclassified ones, so there is no "current" split to divide.
+
+A missing value is always excluded from the health score rather than counted
+as a failure. A company is never marked down for not reporting something its
+accounting framework does not contain.
+""")
+
 st.subheader("Known limitations")
 st.markdown("""
 - **Annual data only.** Every figure is as-of the last filed 10-K. For a
