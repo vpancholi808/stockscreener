@@ -1,0 +1,151 @@
+name: probe yahoo
+
+# Inventory what Yahoo Finance actually returns from a GitHub runner.
+#
+# This exists because the development sandbox cannot reach Yahoo at all, so
+# the enrichment layer has to be written against observed behaviour rather
+# than documentation. yfinance's surface changes often and quietly: fields
+# disappear, shapes change, and rate limiting varies by host.
+#
+# Results go to workflow annotations, which are readable through the API
+# when log archives are not.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Tickers to probe"
+        required: false
+        default: "AAPL,MSFT,JPM,XOM,KO"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-core.txt
+          python -c "import yfinance; print('yfinance', yfinance.__version__)"
+
+      - name: Probe
+        env:
+          TICKERS: ${{ github.event.inputs.tickers || 'AAPL,MSFT,JPM,XOM,KO' }}
+        run: |
+          python - <<'PY'
+          import os, time, warnings
+          warnings.filterwarnings("ignore")
+          import pandas as pd, yfinance as yf
+
+          tickers = [t.strip() for t in os.environ["TICKERS"].split(",")]
+          def note(n, d): print("::notice::Y %s | %s" % (n, str(d)[:380]))
+          def bad(n, d):  print("::error::Y %s FAILED | %s" % (n, str(d)[:380]))
+
+          note("version", "yfinance %s, pandas %s"
+               % (yf.__version__, pd.__version__))
+
+          # 1. Batched history — the one call the project already relies on.
+          try:
+              t0 = time.time()
+              df = yf.download(tickers, period="5y", interval="1mo",
+                               auto_adjust=True, progress=False,
+                               group_by="column", threads=True)
+              note("1-batch-history",
+                   "shape=%s cols=%s levels=%s %.1fs"
+                   % (df.shape, list(df.columns.get_level_values(0).unique())[:6],
+                      df.columns.nlevels, time.time() - t0))
+          except Exception as e:
+              bad("1-batch-history", "%s: %s" % (type(e).__name__, e))
+
+          # 2. Dividends and splits come back only with actions=True.
+          try:
+              t0 = time.time()
+              a = yf.download(tickers, period="5y", interval="1d",
+                              auto_adjust=False, actions=True,
+                              progress=False, group_by="column")
+              fields = list(a.columns.get_level_values(0).unique())
+              note("2-actions", "fields=%s %.1fs" % (fields, time.time() - t0))
+          except Exception as e:
+              bad("2-actions", "%s: %s" % (type(e).__name__, e))
+
+          # 3. fast_info: cheap per-ticker metadata, no full .info round trip.
+          try:
+              t0 = time.time()
+              fi = yf.Ticker(tickers[0]).fast_info
+              keys = sorted(list(fi.keys()))
+              note("3-fast_info", "%d keys in %.2fs: %s"
+                   % (len(keys), time.time() - t0, keys))
+          except Exception as e:
+              bad("3-fast_info", "%s: %s" % (type(e).__name__, e))
+
+          # 4. .info: the expensive path. Time it honestly for 500 names.
+          try:
+              t0 = time.time()
+              info = yf.Ticker(tickers[0]).info
+              elapsed = time.time() - t0
+              wanted = ["sector", "industry", "sharesOutstanding", "marketCap",
+                        "forwardPE", "trailingPE", "dividendYield", "beta",
+                        "targetMeanPrice", "numberOfAnalystOpinions",
+                        "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "payoutRatio",
+                        "returnOnEquity", "profitMargins", "freeCashflow",
+                        "earningsGrowth", "revenueGrowth", "pegRatio"]
+              present = {k: info.get(k) for k in wanted if info.get(k) is not None}
+              note("4-info-timing", "%d keys in %.2fs -> ~%.0f min for 500"
+                   % (len(info), elapsed, elapsed * 500 / 60))
+              note("4-info-fields", ", ".join(
+                  "%s=%s" % (k, round(v, 4) if isinstance(v, float) else v)
+                  for k, v in list(present.items())[:12]))
+              note("4-info-missing", "absent: %s"
+                   % [k for k in wanted if info.get(k) is None])
+          except Exception as e:
+              bad("4-info", "%s: %s" % (type(e).__name__, e))
+
+          # 5. Several .info calls in a row: does Yahoo rate limit a runner?
+          try:
+              t0 = time.time()
+              ok = 0
+              for t in tickers:
+                  try:
+                      if yf.Ticker(t).info.get("sector"):
+                          ok += 1
+                  except Exception:
+                      pass
+              note("5-info-sequential", "%d/%d resolved in %.1fs (%.2fs each)"
+                   % (ok, len(tickers), time.time() - t0,
+                      (time.time() - t0) / len(tickers)))
+          except Exception as e:
+              bad("5-info-sequential", "%s: %s" % (type(e).__name__, e))
+
+          # 6. Analyst estimates — this is what forward P/E needs.
+          try:
+              tk = yf.Ticker(tickers[0])
+              out = []
+              for attr in ("analyst_price_targets", "earnings_estimate",
+                           "revenue_estimate", "recommendations"):
+                  try:
+                      v = getattr(tk, attr)
+                      shape = getattr(v, "shape", None) or len(v)
+                      out.append("%s=%s" % (attr, shape))
+                  except Exception as e:
+                      out.append("%s=ERR(%s)" % (attr, type(e).__name__))
+              note("6-estimates", "; ".join(out))
+          except Exception as e:
+              bad("6-estimates", "%s: %s" % (type(e).__name__, e))
+
+          # 7. Wikipedia, for the constituent list.
+          try:
+              from finmodel.data.sp500 import fetch_sp500
+              members = fetch_sp500(user_agent="probe probe@example.com")
+              note("7-sp500", "%d constituents, first=%s"
+                   % (len(members), members[0] if members else None))
+          except Exception as e:
+              bad("7-sp500", "%s: %s" % (type(e).__name__, e))
+          PY
