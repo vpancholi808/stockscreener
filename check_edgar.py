@@ -26,14 +26,20 @@ sys.path.insert(0, str(HERE))
 CONFIG = HERE / ".finmodel_config"
 
 
+def clean(value: str) -> str:
+    """Collapse whitespace. A trailing newline makes requests reject the
+    header outright, which looks like an SEC block but never reaches SEC."""
+    return " ".join(str(value or "").split())
+
+
 def resolve_user_agent() -> tuple[str, str]:
     """Return (user_agent, where_it_came_from)."""
-    env = os.environ.get("EDGAR_USER_AGENT", "")
+    env = clean(os.environ.get("EDGAR_USER_AGENT", ""))
     if "@" in env:
         return env, "EDGAR_USER_AGENT environment variable"
     if CONFIG.exists():
         try:
-            ua = json.loads(CONFIG.read_text()).get("user_agent", "")
+            ua = clean(json.loads(CONFIG.read_text()).get("user_agent", ""))
             if "@" in ua:
                 return ua, str(CONFIG.name)
         except (json.JSONDecodeError, OSError):
@@ -53,7 +59,7 @@ def prompt_and_save() -> str:
     if "@" not in email:
         print("\n  That does not look like an email address.")
         return ""
-    ua = f"{name} {email}"
+    ua = clean(f"{name} {email}")
     CONFIG.write_text(json.dumps({"user_agent": ua}))
     print(f"\n  Saved to {CONFIG.name}")
     return ua

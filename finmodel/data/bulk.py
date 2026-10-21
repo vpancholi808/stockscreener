@@ -107,7 +107,11 @@ class BulkData:
     def __init__(self, directory: Optional[str] = None, user_agent: Optional[str] = None):
         self.paths = BulkPaths(Path(directory) if directory else DEFAULT_DIR)
         self.paths.directory.mkdir(parents=True, exist_ok=True)
+        from .edgar import normalize_user_agent
         ua = user_agent or os.environ.get("EDGAR_USER_AGENT", "")
+        # A newline from a CI secret or a config file makes requests reject
+        # every call before it is sent; see edgar.normalize_user_agent.
+        ua = " ".join(str(ua or "").split())
         if "@" not in ua:
             raise ValueError(
                 "SEC requires a real User-Agent with an email. Pass user_agent="

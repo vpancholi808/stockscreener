@@ -162,7 +162,8 @@ buy/sell language appears outside the disclaimer.
 ```bash
 for t in test_pipeline test_capm test_dcf test_quant test_stoch \
          test_foundation test_screener test_web test_valuation \
-         test_streamlit test_yahoo test_returns test_performance; do
+         test_streamlit test_yahoo test_returns test_performance \
+         test_edgar; do
   python -W ignore $t.py
 done
 ```

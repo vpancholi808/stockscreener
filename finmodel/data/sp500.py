@@ -105,8 +105,8 @@ def fetch_sp500(user_agent: Optional[str] = None,
             except Exception:
                 pass
 
-    headers = {"User-Agent": user_agent or
-               "finmodel/0.1 (contact: set EDGAR_USER_AGENT)"}
+    headers = {"User-Agent": " ".join(str(
+        user_agent or "finmodel/0.1 (contact: set EDGAR_USER_AGENT)").split())}
     try:
         resp = requests.get(WIKI_URL, headers=headers, timeout=30)
         resp.raise_for_status()

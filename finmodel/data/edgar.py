@@ -19,7 +19,35 @@ import requests
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"
-DEFAULT_UA = os.environ.get("EDGAR_USER_AGENT", "finmodel-toolkit example@example.com")
+
+
+def normalize_user_agent(value: str) -> str:
+    """Collapse all whitespace in a User-Agent so it is a legal header value.
+
+    HTTP header values cannot contain carriage returns or newlines — allowing
+    them would permit response splitting — so `requests` rejects the whole
+    request before it is sent, with `InvalidHeader`.
+
+    That matters because of where this string usually comes from. A value
+    pasted into a GitHub Actions secret box, read from a file, or piped
+    through a shell very often carries a trailing newline, and the resulting
+    failure names the header rather than the cause. Worse, CI masks the
+    secret in its own error message, so the log shows only '***'. Every
+    request then fails identically and it looks like SEC is blocking you.
+
+    Collapsing runs of whitespace to single spaces also repairs the common
+    "Name<tab>email" and "Name  email" cases without changing a good value.
+    """
+    cleaned = " ".join(str(value or "").split())
+    if not cleaned:
+        raise ValueError(
+            "EDGAR user agent is empty. SEC requires a real name and email: "
+            'export EDGAR_USER_AGENT="Your Name you@email.com"')
+    return cleaned
+
+
+DEFAULT_UA = normalize_user_agent(
+    os.environ.get("EDGAR_USER_AGENT") or "finmodel-toolkit example@example.com")
 
 
 class EdgarError(RuntimeError):
@@ -30,10 +58,15 @@ class EdgarClient:
     """Thin, polite wrapper over the SEC EDGAR JSON API."""
 
     def __init__(self, user_agent: str = DEFAULT_UA, min_interval: float = 0.15):
+        # Normalise before anything else: a trailing newline from a secret or
+        # a config file makes requests reject every call with InvalidHeader,
+        # which reads like an SEC block but never reaches SEC.
+        user_agent = normalize_user_agent(user_agent)
         if "@" not in user_agent:
             # Not fatal, but SEC strongly prefers a contact email.
             print("WARNING: set a real User-Agent with your email "
                   "(EdgarClient(user_agent='Name you@email.com')).")
+        self.user_agent = user_agent
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": user_agent,
                                      "Accept-Encoding": "gzip, deflate"})
