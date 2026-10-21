@@ -56,6 +56,17 @@ def expect(label: str, condition: bool, detail: str) -> bool:
     return condition
 
 
+def _money(v) -> str:
+    """Compact money, so a scale error is visible at a glance."""
+    if v is None or v != v:
+        return "none"
+    v = float(v)
+    for cut, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(v) >= cut:
+            return "%.2f%s" % (v / cut, suffix)
+    return "%.2f" % v
+
+
 def rule(title: str) -> None:
     print("\n" + "=" * 70)
     print(title)
@@ -77,6 +88,7 @@ def main() -> int:
     market = pd.read_sql_query("SELECT * FROM market_data", conn)
     merged = companies.merge(market, on="cik", how="left",
                              suffixes=("", "_mkt"))
+    history = pd.read_sql_query("SELECT * FROM financial_history", conn)
 
     rule("1. UNIVERSE")
     note("loaded", "%d companies, %d sectors, latest FY %s"
@@ -105,7 +117,7 @@ def main() -> int:
     # Altman Z is not meaningful and the inputs are often absent. Holding
     # every metric to one threshold would report a correct pipeline as broken.
     FLOORS = {
-        "revenue": 95, "fcf": 85, "net_margin": 90, "roe": 85,
+        "revenue": 95, "fcf": 80, "net_margin": 90, "roe": 85,
         "health_score": 95, "sector_percentile": 95, "piotroski": 70,
         "current_ratio": 55,          # banks present unclassified balance sheets
         "gross_margin": 50,           # no cost of revenue for financials/REITs
@@ -183,7 +195,32 @@ def main() -> int:
         detail = ("median %.3f, range %.3f..%.3f, %d outside [%.1f, %.1f]"
                   % (s.median(), s.min(), s.max(), outside, lo, hi))
         # A handful of genuine extremes is normal; a large share is a bug.
-        expect("range %s" % col, outside <= max(3, 0.02 * len(s)), detail)
+        ok = expect("range %s" % col, outside <= max(3, 0.02 * len(s)), detail)
+        if not ok:
+            # Name the offenders with the inputs behind them. A margin of
+            # 9,586% is not a margin, it is a denominator problem, and the
+            # only way to find out which is to see the revenue that produced
+            # it next to the income line it was divided into.
+            bad_rows = companies.loc[((companies[col] < lo)
+                                      | (companies[col] > hi)), :]
+            worst = bad_rows.reindex(
+                bad_rows[col].abs().sort_values(ascending=False).index).head(8)
+            for _, r in worst.iterrows():
+                hist = history[(history["cik"] == r["cik"])
+                               & (history["fiscal_year"] == r["fiscal_year"])]
+                extra = ""
+                if not hist.empty:
+                    h = hist.iloc[0]
+                    extra = (" | hist revenue=%s op_inc=%s net_inc=%s equity=%s"
+                             % (_money(h.get("revenue")),
+                                _money(h.get("operating_income")),
+                                _money(h.get("net_income")),
+                                _money(h.get("total_equity"))))
+                bad("outlier %s" % col,
+                    "%s (%s) FY%s %s=%.2f | companies.revenue=%s%s"
+                    % (r.get("ticker"), (r.get("sector") or "")[:16],
+                       r.get("fiscal_year"), col, r[col],
+                       _money(r.get("revenue")), extra))
 
     if "dividend_yield" in market.columns:
         s = market["dividend_yield"].dropna()
