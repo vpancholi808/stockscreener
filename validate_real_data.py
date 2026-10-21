@@ -100,20 +100,45 @@ def main() -> int:
                                         100 * sectors.iloc[0] / total))
 
     rule("2. METRIC COVERAGE")
-    core = ["revenue", "ebitda", "fcf", "gross_margin", "operating_margin",
-            "net_margin", "roe", "roic", "current_ratio", "debt_to_equity",
-            "interest_coverage", "net_debt_to_ebitda", "piotroski", "altman",
-            "beneish", "health_score", "sector_percentile"]
+    # Coverage floors are per metric, because several are not universal
+    # concepts. A bank has no cost of revenue, so no gross margin; a REIT's
+    # Altman Z is not meaningful and the inputs are often absent. Holding
+    # every metric to one threshold would report a correct pipeline as broken.
+    FLOORS = {
+        "revenue": 95, "fcf": 85, "net_margin": 90, "roe": 85,
+        "health_score": 95, "sector_percentile": 95, "piotroski": 70,
+        "current_ratio": 55,          # banks present unclassified balance sheets
+        "gross_margin": 50,           # no cost of revenue for financials/REITs
+        "operating_margin": 70,
+        "ebitda": 70, "roic": 70, "net_debt_to_ebitda": 65,
+        "interest_coverage": 55,      # needs a separate interest expense line
+        "altman": 40,                 # designed for manufacturers, not banks
+        "beneish": 40,                # needs two consecutive years of 8 inputs
+        "debt_to_equity": 80,
+    }
     rows = []
-    for col in core:
+    for col, floor in FLOORS.items():
         if col not in companies.columns:
             bad("missing column", col)
             continue
-        pct = 100 * companies[col].notna().mean()
-        rows.append((col, pct))
-    for col, pct in sorted(rows, key=lambda r: r[1]):
-        label = "coverage" if pct >= 70 else "THIN coverage"
-        (note if pct >= 70 else bad)(label, "%-22s %5.1f%%" % (col, pct))
+        rows.append((col, 100 * companies[col].notna().mean(), floor))
+    for col, pct, floor in sorted(rows, key=lambda r: r[1]):
+        expect("coverage", pct >= floor,
+               "%-22s %5.1f%% (floor %d%%)" % (col, pct, floor))
+
+    # Which sectors systematically lack which metric. This is structure, not
+    # failure, but it belongs on the methodology page rather than being
+    # discovered by a user staring at an empty column.
+    for col in ("gross_margin", "altman", "interest_coverage"):
+        if col not in companies.columns:
+            continue
+        by_sector = companies.groupby("sector")[col].apply(
+            lambda s: 100 * s.notna().mean())
+        absent = by_sector[by_sector < 50]
+        if len(absent):
+            note("not applicable", "%s is absent for %s"
+                 % (col, ", ".join("%s (%.0f%%)" % (s, v)
+                                   for s, v in absent.items())))
 
     priced_cols = ["price", "market_cap", "pe", "pb", "ps", "ev_ebitda",
                    "fcf_yield", "beta", "forward_pe", "dividend_yield",
@@ -191,11 +216,21 @@ def main() -> int:
         thin = benchmarks[benchmarks["count"] < 5]
         note("thin benchmarks", "%d metric/sector pairs with fewer than 5 "
              "constituents (reported as unavailable by design)" % len(thin))
+        # A NaN median means the metric does not exist for that sector, which
+        # is the honest answer for a bank's gross margin — not a range error.
         gm = benchmarks[benchmarks["metric"] == "gross_margin"]
+        unavailable = []
         for _, r in gm.iterrows():
-            if r["median"] is not None and not (0 <= r["median"] <= 1):
+            median = r["median"]
+            if median is None or median != median:
+                unavailable.append(r["sector"])
+            elif not (0 <= median <= 1):
                 bad("benchmark range", "%s gross margin median %.3f"
-                    % (r["sector"], r["median"]))
+                    % (r["sector"], median))
+        if unavailable:
+            note("benchmark not applicable",
+                 "gross margin has no median for %s — these sectors do not "
+                 "report a cost of revenue" % ", ".join(unavailable))
         # The mean/median gap is the project's stated reason for using the
         # median; show it on real data rather than asserting it.
         pe = benchmarks[(benchmarks["metric"] == "pe")
