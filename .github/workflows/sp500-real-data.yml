@@ -1,0 +1,158 @@
+name: sp500 real data
+
+# Loads the real S&P 500 — SEC filings plus Yahoo prices and profiles — into
+# a throwaway SQLite database, then checks the result.
+#
+# This is the only place the full pipeline runs against live data. The
+# development sandbox can reach neither SEC nor Yahoo, and the offline suites
+# only prove the models are arithmetically right on synthetic input. They
+# cannot show whether coverage is thin on some line item, whether a sector
+# median is implausible, or whether the pages still render when the data is
+# messy rather than generated.
+#
+# No DATABASE_URL needed: SQLite in the runner's workspace is enough to
+# validate, and the database is discarded with the runner.
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Constituents to load (0 = all ~503)"
+        required: false
+        default: "60"
+      skip_profiles:
+        description: "Skip the Yahoo profile pass"
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Load the universe
+        env:
+          EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
+          DATABASE_URL: sqlite:///sp500.db
+          LIMIT: ${{ github.event.inputs.limit || '60' }}
+          SKIP: ${{ github.event.inputs.skip_profiles }}
+        run: |
+          if [ -z "$EDGAR_USER_AGENT" ]; then
+            echo "::error::EDGAR_USER_AGENT is not set."
+            exit 1
+          fi
+          ARGS="--sp500"
+          [ "$LIMIT" != "0" ] && ARGS="$ARGS --limit $LIMIT"
+          [ "$SKIP" = "true" ] && ARGS="$ARGS --no-profiles"
+          echo "Running: python worker.py $ARGS"
+          time python worker.py $ARGS 2>&1 | tail -40
+
+      - name: Validate
+        if: always()
+        env:
+          DATABASE_URL: sqlite:///sp500.db
+          SERVE_MARKET_DATA: "true"
+          LIMIT: ${{ github.event.inputs.limit || '60' }}
+          SKIP: ${{ github.event.inputs.skip_profiles }}
+        run: |
+          # Expect most of what was asked for. Some constituents legitimately
+          # have no usable 10-K XBRL (recent listings, foreign filers), so the
+          # floor is a fraction rather than the exact count.
+          if [ "$LIMIT" = "0" ]; then
+            export EXPECT_MIN_COMPANIES=420
+          else
+            export EXPECT_MIN_COMPANIES=$(( LIMIT * 70 / 100 ))
+          fi
+          if [ "$SKIP" = "true" ]; then
+            export EXPECT_MIN_FORWARD_PE=0
+          else
+            export EXPECT_MIN_FORWARD_PE=$(( EXPECT_MIN_COMPANIES / 2 ))
+          fi
+          echo "Floors: companies>=$EXPECT_MIN_COMPANIES forward_pe>=$EXPECT_MIN_FORWARD_PE"
+          python validate_real_data.py
+
+      - name: Write the summary
+        if: always()
+        env:
+          DATABASE_URL: sqlite:///sp500.db
+          SERVE_MARKET_DATA: "true"
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import pandas as pd
+          from finmodel.web.store import Database
+
+          db = Database()
+          try:
+              s = db.stats()
+          except Exception as exc:
+              print("Could not read the database: %s" % exc)
+              raise SystemExit(0)
+
+          print("## S&P 500 real-data run\n")
+          print("| | |")
+          print("|---|---|")
+          print("| Companies | **%s** |" % s["companies"])
+          print("| Passing the default screen | **%s** |" % (s["passing"] or 0))
+          print("| Sectors | **%s** |" % s["sectors"])
+          print("| Latest fiscal year | **%s** |" % s["latest_year"])
+          print("| With market data | **%s** |" % s["priced"])
+
+          conn = db.connect()
+          df = pd.read_sql_query(
+              "SELECT c.ticker, c.name, c.sector, c.fiscal_year, c.revenue,"
+              " c.operating_margin, c.roic, c.health_passed, c.health_total,"
+              " c.piotroski, m.pe, m.forward_pe, m.dividend_yield,"
+              " m.target_mean_price, m.price"
+              " FROM companies c LEFT JOIN market_data m ON c.cik = m.cik"
+              " ORDER BY c.revenue DESC LIMIT 20", conn)
+          print("\n### Largest 20 by revenue\n")
+          print("| Ticker | Sector | FY | Revenue | Op margin | ROIC | Health |"
+                " P/E | Fwd P/E | Yield |")
+          print("|---|---|---|---|---|---|---|---|---|---|")
+          def f(v, fmt, scale=1.0):
+              return "—" if v is None or v != v else fmt % (v * scale)
+          for _, r in df.iterrows():
+              print("| %s | %s | %s | %s | %s | %s | %s/%s | %s | %s | %s |" % (
+                  r.ticker, (r.sector or "")[:18], r.fiscal_year,
+                  f(r.revenue, "$%.1fB", 1e-9),
+                  f(r.operating_margin, "%.1f%%", 100),
+                  f(r.roic, "%.1f%%", 100),
+                  int(r.health_passed) if r.health_passed == r.health_passed else "?",
+                  int(r.health_total) if r.health_total == r.health_total else "?",
+                  f(r.pe, "%.1f"), f(r.forward_pe, "%.1f"),
+                  f(r.dividend_yield, "%.2f%%", 100)))
+
+          sectors = pd.read_sql_query(
+              "SELECT sector, COUNT(*) n,"
+              " SUM(CASE WHEN passes_screen THEN 1 ELSE 0 END) passing,"
+              " AVG(operating_margin) om, AVG(roic) roic"
+              " FROM companies GROUP BY sector ORDER BY n DESC", conn)
+          print("\n### By sector\n")
+          print("| Sector | Companies | Passing | Avg op margin | Avg ROIC |")
+          print("|---|---|---|---|---|")
+          for _, r in sectors.iterrows():
+              print("| %s | %d | %d | %s | %s |" % (
+                  r.sector, r.n, r.passing or 0,
+                  f(r.om, "%.1f%%", 100), f(r.roic, "%.1f%%", 100)))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sp500-database
+          path: sp500.db
+          retention-days: 7
+          if-no-files-found: warn
