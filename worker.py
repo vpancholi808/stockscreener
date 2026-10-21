@@ -60,7 +60,11 @@ def main():
     ap.add_argument("--no-prices", action="store_true",
                     help="skip the price fetch and valuation step")
     ap.add_argument("--sp500", action="store_true",
-                    help="load the current S&P 500 constituents")
+                    help="load the current S&P 500 constituents (the default "
+                         "universe for this project)")
+    ap.add_argument("--no-profiles", action="store_true",
+                    help="skip the Yahoo profile pass (forward P/E, analyst "
+                         "targets, 52-week range)")
     args = ap.parse_args()
 
     import warnings
@@ -86,6 +90,12 @@ def main():
         ua = get_user_agent()
         members = fetch_sp500(user_agent=ua)
         print("  S&P 500: %d constituents" % len(members))
+        if args.limit:
+            members = members[:args.limit]
+            print("  limited to the first %d" % len(members))
+        # GICS sectors come with the constituent list and are the standard
+        # classification for this index, so they are used in preference to
+        # deriving a sector from the filer's SIC code.
         result = load_tickers([m["ticker"] for m in members], ua, db=db,
                               sectors={m["ticker"]: m.get("gics_sector")
                                        for m in members})
@@ -102,8 +112,15 @@ def main():
     if not args.seed and not args.no_prices:
         from finmodel.web.loader import attach_valuation
         attach_valuation(db)
+        # Profiles are per-ticker and only affordable for a bounded universe,
+        # so they run for the S&P 500 or an explicit ticker list, never for
+        # the whole market.
+        if not args.no_profiles and not args.universe:
+            from finmodel.web.loader import attach_profiles
+            attach_profiles(db)
     from finmodel.web.loader import compute_benchmarks
     compute_benchmarks(db)
+    db.compute_sector_percentiles()
 
     stats = db.stats()
     print("\n  loaded %d, skipped %d" % (result["loaded"], result["skipped"]))

@@ -111,7 +111,21 @@ CREATE TABLE IF NOT EXISTS market_data (
     max_drawdown        REAL,
     price_observations  INTEGER,
     source              TEXT,
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- Yahoo profile fields (data/profiles.py). Analyst estimates and the
+    -- 52-week range cannot come from filings; SEC publishes nothing
+    -- forward-looking. Scraped vendor data, so withheld unless
+    -- SERVE_MARKET_DATA is set.
+    trailing_eps        REAL,
+    forward_eps         REAL,
+    payout_ratio        REAL,
+    target_mean_price   REAL,
+    analyst_count       INTEGER,
+    week52_high         REAL,
+    week52_low          REAL,
+    yahoo_sector        TEXT,
+    yahoo_industry      TEXT
 );
 
 

@@ -52,6 +52,10 @@ PRICE_DERIVED_METRICS = {
 MARKET_FIELDS = {
     "price", "market_cap", "enterprise_value", "beta", "volatility",
     "return_1y", "return_total", "max_drawdown", "price_observations",
+    # Yahoo profile fields (data/profiles.py): vendor data, withheld on the
+    # same terms as everything else sourced from a price feed.
+    "trailing_eps", "forward_eps", "payout_ratio", "target_mean_price",
+    "analyst_count", "week52_high", "week52_low",
 } | PRICE_DERIVED_METRICS
 
 CACHE_TTL = int(os.environ.get("UI_CACHE_TTL", "300"))

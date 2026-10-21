@@ -60,6 +60,12 @@ CREATE TABLE IF NOT EXISTS market_data (
     fcf_yield REAL, earnings_yield REAL, dividend_yield REAL,
     beta REAL, volatility REAL, return_1y REAL, return_total REAL,
     max_drawdown REAL, price_observations INTEGER, source TEXT,
+    -- Yahoo profile fields. Analyst estimates and the 52-week range cannot
+    -- come from filings; SEC does not publish forward-looking data.
+    trailing_eps REAL, forward_eps REAL, payout_ratio REAL,
+    target_mean_price REAL, analyst_count INTEGER,
+    week52_high REAL, week52_low REAL,
+    yahoo_sector TEXT, yahoo_industry TEXT,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -95,6 +101,12 @@ MARKET_COLS = [
     "peg", "fcf_yield", "earnings_yield", "dividend_yield", "beta",
     "volatility", "return_1y", "return_total", "max_drawdown",
     "price_observations", "source",
+    # Yahoo profile fields (data/profiles.py). Scraped vendor data, so they
+    # are withheld alongside the price-derived fields unless
+    # SERVE_MARKET_DATA is set.
+    "trailing_eps", "forward_eps", "payout_ratio", "target_mean_price",
+    "analyst_count", "week52_high", "week52_low",
+    "yahoo_sector", "yahoo_industry",
 ]
 
 BENCHMARK_COLS = [
@@ -238,19 +250,44 @@ class Database:
         return len(data)
 
     def upsert_market(self, rows: list[dict]):
+        """Write market data, touching only the columns actually supplied.
+
+        This is a partial upsert on purpose. Prices and valuation multiples
+        arrive from one pass (loader.attach_valuation) and Yahoo profile
+        fields from another (loader.attach_profiles), so whichever runs second
+        must not blank the other's work.
+
+        Writing the full MARKET_COLS list every time did exactly that:
+        `r.get(c)` yields None for a key the caller never set, and both
+        `INSERT OR REPLACE` and `DO UPDATE SET col=EXCLUDED.col` happily store
+        that None over a good value. The symptom is silent — the row still
+        exists, the screener still renders, the numbers are just gone.
+        """
         if not rows:
             return 0
         conn = self.connect()
-        cols = MARKET_COLS
+
+        supplied = {k for r in rows for k in r if k in MARKET_COLS}
+        supplied.discard("cik")
+        cols = ["cik"] + [c for c in MARKET_COLS if c in supplied]
+        if len(cols) == 1:
+            return 0
+
         marks = ",".join([self.ph] * len(cols))
+        updates = ",".join("%s=EXCLUDED.%s" % (c, c) for c in cols[1:])
         if self.is_postgres:
-            updates = ",".join("%s=EXCLUDED.%s" % (c, c) for c in cols if c != "cik")
             sql = ("INSERT INTO market_data (%s) VALUES (%s) "
                    "ON CONFLICT (cik) DO UPDATE SET %s, updated_at=now()"
                    % (",".join(cols), marks, updates))
         else:
-            sql = ("INSERT OR REPLACE INTO market_data (%s) VALUES (%s)"
-                   % (",".join(cols), marks))
+            # ON CONFLICT DO UPDATE, not INSERT OR REPLACE: the latter deletes
+            # the existing row first, so every unlisted column reverts to its
+            # default. SQLite has supported this form since 3.24 (2018).
+            sql = ("INSERT INTO market_data (%s) VALUES (%s) "
+                   "ON CONFLICT (cik) DO UPDATE SET %s, "
+                   "updated_at=CURRENT_TIMESTAMP"
+                   % (",".join(cols), marks, updates.replace("EXCLUDED.",
+                                                             "excluded.")))
         data = [tuple(_clean(r.get(c)) for c in cols) for r in rows]
         conn.cursor().executemany(sql, data)
         conn.commit()

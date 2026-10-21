@@ -40,7 +40,12 @@ ALLOWED_ORIGINS = [o.strip() for o in
                    os.environ.get("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
 
 MARKET_FIELDS = ("price", "shares_diluted", "market_cap", "pe", "ev_ebitda",
-                 "fcf_yield", "beta")
+                 "fcf_yield", "beta",
+                 # Yahoo profile fields: vendor data, same licensing position
+                 # as the price-derived ones.
+                 "forward_pe", "peg", "dividend_yield", "trailing_eps",
+                 "forward_eps", "payout_ratio", "target_mean_price",
+                 "analyst_count", "week52_high", "week52_low")
 
 app = FastAPI(
     title="finmodel screener API",

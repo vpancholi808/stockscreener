@@ -336,6 +336,76 @@ def attach_valuation(db: Optional[Database] = None,
     return n
 
 
+def attach_profiles(db: Optional[Database] = None,
+                    tickers: Optional[list] = None,
+                    verbose: bool = True) -> int:
+    """Pull Yahoo company profiles and merge them into market_data.
+
+    Adds what filings cannot supply: forward P/E and forward EPS (analyst
+    consensus, which SEC does not publish), PEG, payout ratio, analyst price
+    targets and the 52-week range, plus Yahoo's own sector and industry as a
+    cross-check on the SIC-derived classification.
+
+    Per-ticker and therefore only sane for a bounded universe — roughly four
+    minutes for the S&P 500, hours for the whole market. See data/profiles.py.
+
+    The write is a partial upsert: it touches only the profile columns and
+    leaves prices and multiples from attach_valuation intact.
+    """
+    from ..data.profiles import fetch_profiles
+
+    db = db or Database()
+    conn = db.connect()
+    cur = conn.cursor()
+    cur.execute("SELECT cik, ticker, sector FROM companies "
+                "WHERE ticker IS NOT NULL AND ticker <> ''")
+    companies = db._rows_to_dicts(cur)
+    if not companies:
+        return 0
+
+    by_ticker = {c["ticker"].upper(): c for c in companies}
+    wanted = ([t.upper() for t in tickers] if tickers
+              else sorted(by_ticker))
+    wanted = [t for t in wanted if t in by_ticker]
+    if not wanted:
+        return 0
+
+    if verbose:
+        print("  fetching Yahoo profiles for %d tickers "
+              "(about %.0f min) ..." % (len(wanted), len(wanted) * 0.35 / 60))
+    try:
+        got = fetch_profiles(wanted, verbose=verbose)
+    except ImportError:
+        print("  yfinance not installed - skipping profiles")
+        return 0
+
+    columns = ("forward_pe", "peg", "dividend_yield", "trailing_eps",
+               "forward_eps", "payout_ratio", "target_mean_price",
+               "analyst_count", "week52_high", "week52_low",
+               "yahoo_sector", "yahoo_industry")
+    rows = []
+    for ticker, profile in got.profiles.items():
+        data = profile.as_dict()
+        row = {"cik": by_ticker[ticker]["cik"]}
+        row.update({c: data.get(c) for c in columns})
+        rows.append(row)
+
+    n = db.upsert_market(rows)
+    if verbose:
+        print("  profiles attached for %d companies" % n)
+        for note in got.notes:
+            print("    %s" % note)
+        mismatches = sum(
+            1 for t, p in got.profiles.items()
+            if p.yahoo_sector and by_ticker[t].get("sector")
+            and p.yahoo_sector.lower() != by_ticker[t]["sector"].lower())
+        if mismatches:
+            print("    %d sector classifications differ from ours "
+                  "(neither is authoritative; benchmarks use ours)"
+                  % mismatches)
+    return n
+
+
 def _shares_for(db: Database, cik: int) -> Optional[float]:
     """Diluted share count from the company's own filings.
 
