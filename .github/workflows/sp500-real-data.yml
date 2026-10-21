@@ -21,10 +21,9 @@ on:
         required: false
         default: "60"
       skip_profiles:
-        description: "Skip the Yahoo profile pass"
-        type: boolean
+        description: "Skip the Yahoo profile pass (yes/no)"
         required: false
-        default: false
+        default: "no"
 
 jobs:
   load:
@@ -48,7 +47,7 @@ jobs:
           EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
           DATABASE_URL: sqlite:///sp500.db
           LIMIT: ${{ github.event.inputs.limit || '60' }}
-          SKIP: ${{ github.event.inputs.skip_profiles }}
+          SKIP: ${{ github.event.inputs.skip_profiles || 'no' }}
         run: |
           if [ -z "$EDGAR_USER_AGENT" ]; then
             echo "::error::EDGAR_USER_AGENT is not set."
@@ -56,7 +55,7 @@ jobs:
           fi
           ARGS="--sp500"
           [ "$LIMIT" != "0" ] && ARGS="$ARGS --limit $LIMIT"
-          [ "$SKIP" = "true" ] && ARGS="$ARGS --no-profiles"
+          [ "$SKIP" = "yes" ] && ARGS="$ARGS --no-profiles"
           echo "Running: python worker.py $ARGS"
           time python worker.py $ARGS 2>&1 | tail -40
 
@@ -66,7 +65,7 @@ jobs:
           DATABASE_URL: sqlite:///sp500.db
           SERVE_MARKET_DATA: "true"
           LIMIT: ${{ github.event.inputs.limit || '60' }}
-          SKIP: ${{ github.event.inputs.skip_profiles }}
+          SKIP: ${{ github.event.inputs.skip_profiles || 'no' }}
         run: |
           # Expect most of what was asked for. Some constituents legitimately
           # have no usable 10-K XBRL (recent listings, foreign filers), so the
@@ -76,7 +75,7 @@ jobs:
           else
             export EXPECT_MIN_COMPANIES=$(( LIMIT * 70 / 100 ))
           fi
-          if [ "$SKIP" = "true" ]; then
+          if [ "$SKIP" = "yes" ]; then
             export EXPECT_MIN_FORWARD_PE=0
           else
             export EXPECT_MIN_FORWARD_PE=$(( EXPECT_MIN_COMPANIES / 2 ))
