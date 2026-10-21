@@ -50,6 +50,31 @@ def _safe(a, b):
     return a / b if b not in (0, 0.0) and not pd.isna(b) else float("nan")
 
 
+def _return_on(income, capital):
+    """A return on a capital base, undefined when that base is not positive.
+
+    A company that has bought back most of its own stock carries book equity
+    near zero or below it. Net income divided by a negative denominator comes
+    out as a large negative number that reads as catastrophic performance
+    when the business is in fact highly profitable: on a real S&P 500 run
+    McDonald's showed -478% ROE on $8.6B of earnings, Mettler-Toledo -3,677%
+    and Colgate +3,948%, every one of them from an equity base near zero
+    rather than from anything about the company.
+
+    This is the rule valuation._d already applies to a P/E on negative
+    earnings: a ratio on a non-positive denominator is undefined, not
+    extreme. Returning it corrupts every average, benchmark and screen it
+    reaches, and marks profitable companies as failures on the scorecard.
+    """
+    try:
+        income, capital = float(income), float(capital)
+    except (TypeError, ValueError):
+        return float("nan")
+    if pd.isna(capital) or capital <= 0:
+        return float("nan")
+    return income / capital
+
+
 def _cagr(series: pd.Series) -> float:
     s = series.dropna()
     if len(s) < 2 or s.iloc[0] <= 0:
@@ -105,8 +130,8 @@ def _row_from_model(model: ThreeStatementModel, market_cap: Optional[float]) -> 
         "gross_margin": _safe(gross_profit, revenue),
         "operating_margin": _safe(ebit, revenue),
         "net_margin": _safe(ni, revenue),
-        "roe": _safe(ni, equity),
-        "roic": _safe(nopat, debt + (equity if pd.notna(equity) else 0)),
+        "roe": _return_on(ni, equity),
+        "roic": _return_on(nopat, debt + (equity if pd.notna(equity) else 0)),
         "quality_grade": model.quality["grade"],
         "years": yrs,
         "trend_revenue": rev_series, "trend_net_income": ni_series,

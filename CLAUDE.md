@@ -371,3 +371,24 @@ This class of bug is invisible on synthetic data and invisible on any single
 company you happen to check. It took running the real index and plotting the
 range of every metric to find it, which is what `validate_real_data.py` is
 for.
+
+## ROE and ROIC are undefined on a non-positive capital base
+
+The real S&P 500 run showed McDonald's at -478% ROE on $8.6B of earnings,
+Mettler-Toledo at -3,677%, O'Reilly, HP and Masco similarly. None of it was
+a parsing error: those companies carry *negative book equity* after years of
+buybacks, and net income over a negative denominator is a large negative
+number that reads as catastrophe.
+
+- **`_return_on(income, capital)` returns NaN when capital <= 0**, in
+  scorecard.py and screener.py. It is the rule `valuation._d` already applies
+  to a P/E on negative earnings: a ratio on a non-positive denominator is
+  undefined, not extreme.
+- **This matters beyond display.** The scorecard tests ROE >= 12%, so a
+  profitable company with negative equity was being marked as *failing* a
+  profitability test. Missing now counts as n/a and is excluded from the
+  score, which is the existing rule for absent data.
+- **A small but positive equity base is left alone.** Colgate's $54M equity
+  gives a real 3,948% ROE. It is genuine, and `portfolio_builder.METRIC_BOUNDS`
+  already excludes readings like it from weighted averages. Clipping at
+  source as well would be a second, inconsistent rule.

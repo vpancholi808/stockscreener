@@ -210,6 +210,30 @@ check("short history rejected",
 check("benchmark itself gets no beta",
       price_statistics(panel)["^GSPC"]["beta"] is None)
 
+print("=" * 64); print("6) RETURNS ON A NON-POSITIVE CAPITAL BASE"); print("=" * 64)
+
+import math
+from finmodel.scorecard import _return_on
+
+# Figures from a real S&P 500 run. Each of these companies is highly
+# profitable and carries negative or near-zero book equity after years of
+# buybacks, so ROE on the raw denominator reads as catastrophe.
+check("McDonald's negative equity gives no ROE, not -478%",
+      math.isnan(_return_on(8.56e9, -1.79e9)))
+check("Mettler-Toledo negative equity gives no ROE, not -3677%",
+      math.isnan(_return_on(869e6, -23.64e6)))
+check("O'Reilly negative equity gives no ROE",
+      math.isnan(_return_on(2.54e9, -763.35e6)))
+check("a zero capital base gives no ROE", math.isnan(_return_on(1e9, 0.0)))
+check("a missing capital base gives no ROE", math.isnan(_return_on(1e9, None)))
+check("an ordinary company is unaffected",
+      abs(_return_on(1e9, 10e9) - 0.10) < 1e-12, "10.0%")
+check("a small but genuinely positive base still computes",
+      _return_on(2.13e9, 54e6) > 1.0,
+      "Colgate: real, extreme, bounded elsewhere by METRIC_BOUNDS")
+check("a real loss over positive equity is kept",
+      abs(_return_on(-14.5e9, 5.77e9) + 2.513) < 0.01, "-251%")
+
 print("=" * 64)
 print("ALL PASSED" if not fails else "FAILURES: %s" % fails)
 sys.exit(1 if fails else 0)

@@ -22,6 +22,31 @@ def _safe(a, b):
     return a / b if b not in (0, 0.0) and not pd.isna(b) else float("nan")
 
 
+def _return_on(income, capital):
+    """A return on a capital base, undefined when that base is not positive.
+
+    A company that has bought back most of its own stock carries book equity
+    near zero or below it. Net income divided by a negative denominator comes
+    out as a large negative number that reads as catastrophic performance
+    when the business is in fact highly profitable: on a real S&P 500 run
+    McDonald's showed -478% ROE on $8.6B of earnings, Mettler-Toledo -3,677%
+    and Colgate +3,948%, every one of them from an equity base near zero
+    rather than from anything about the company.
+
+    This is the rule valuation._d already applies to a P/E on negative
+    earnings: a ratio on a non-positive denominator is undefined, not
+    extreme. Returning it corrupts every average, benchmark and screen it
+    reaches, and marks profitable companies as failures on the scorecard.
+    """
+    try:
+        income, capital = float(income), float(capital)
+    except (TypeError, ValueError):
+        return float("nan")
+    if pd.isna(capital) or capital <= 0:
+        return float("nan")
+    return income / capital
+
+
 @dataclass
 class ScorecardConfig:
     # Leverage / solvency
@@ -102,8 +127,8 @@ def compute_scorecard(fin: Financials, cfg: ScorecardConfig | None = None,
         _grade("cash_conversion", _safe(ocf, net_income), cfg.min_cash_conversion, True),
         _grade("gross_margin", _safe(gross_profit, revenue), cfg.min_gross_margin, True),
         _grade("operating_margin", _safe(ebit, revenue), cfg.min_operating_margin, True),
-        _grade("roe", _safe(net_income, equity), cfg.min_roe, True),
-        _grade("roic", _safe(nopat, invested_capital), cfg.min_roic, True),
+        _grade("roe", _return_on(net_income, equity), cfg.min_roe, True),
+        _grade("roic", _return_on(nopat, invested_capital), cfg.min_roic, True),
     ]
     if cfg.require_positive_fcf:
         metrics.append(_grade("positive_fcf", fcf, 0.0, True))
