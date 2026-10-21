@@ -261,3 +261,29 @@ corrections that moving from teaching code to production requires. Tested by
   saying so — the FINA4472 notebook has exactly this bug. `max_age_hours`
   defaults to 24 and the cache key separates `auto_adjust` settings, because
   adjusted and quoted prices must never share an entry.
+
+## EDGAR User-Agent (data/edgar.py)
+
+- **Normalise the User-Agent before it reaches a header.** HTTP forbids CR
+  and LF in header values, so `requests` raises `InvalidHeader` and nothing
+  is sent. A value pasted into a GitHub Actions secret box almost always
+  carries a trailing newline. The failure is brutal to diagnose from
+  outside: CI masks the secret in its own error (`'***'`), every endpoint
+  fails identically, and it looks exactly like SEC blocking the runner's IP.
+  `normalize_user_agent` collapses whitespace; `EdgarClient` applies it at
+  construction so one chokepoint covers every caller. `BulkData` and
+  `sp500.fetch_sp500` do the same for their own headers.
+- **The regression test asserts header legality, not tidiness.**
+  `test_edgar.py` checks that `requests.PreparedRequest.prepare_headers`
+  *rejects* a raw trailing newline and *accepts* the normalised value. A
+  string-equality test would have passed while the bug remained.
+- **Verified live.** `.github/workflows/check-edgar.yml` (manual dispatch)
+  pulls real filings using only `EDGAR_USER_AGENT` and reports each layer
+  as a workflow annotation. Annotations are readable through the API when
+  log archives are not, so failures stay diagnosable from a sandbox.
+  Confirmed working: MU -> CIK 0000723125, 632 us-gaap concepts, full model
+  build. Micron FY2022-FY2025 revenue reconciles exactly to reported
+  figures, which validates the duration-period parser against real data.
+- **The parser correctly ignores the `fy` label and uses period end dates.**
+  Micron's FY2026 10-K tags the prior year (2024-08-30..2025-08-28) as both
+  fy2025 and fy2026. Trusting `fy` would silently pick the comparative.
