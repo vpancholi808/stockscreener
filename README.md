@@ -29,13 +29,16 @@ No analyst estimates, no price targets, no buy/sell verdicts — see
 
 ## Quick start
 
-Three commands to a working site:
+Two commands to a working site with 497 real S&P 500 companies:
 
 ```bash
 pip install -r requirements.txt
-python worker.py --seed                 # demo data — no network, no SEC key
 streamlit run streamlit_app.py          # http://localhost:8501
 ```
+
+The dataset ships at `data/sp500.db` and is used automatically, so there is
+nothing to load first. It is filings-only; see [`STREAMLIT.md`](STREAMLIT.md)
+for why, and for how to pull prices into a database of your own.
 
 For real filings instead of the demo set (SEC requires a real name and email —
 there is no API key and nothing to sign up for):

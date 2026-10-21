@@ -20,6 +20,11 @@
 *.sqlite3
 finmodel_web.db
 universe.db
+# The loaded S&P 500 dataset IS committed. It is about a megabyte, the app
+# only reads it, and shipping it means a fresh deployment has real data on
+# first boot with no database to provision. CI rebuilds it from live SEC and
+# Yahoo data on every run.
+!data/sp500.db
 # SEC bulk dataset (~1.5 GB) and the per-company cache
 .finmodel_cache/
 .finmodel_bulk/

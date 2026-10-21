@@ -266,8 +266,12 @@ def require_data() -> bool:
 
     st.warning("No data loaded yet.", icon="📭")
     st.markdown(
-        "The app reads from a database that a separate worker fills. Nothing "
-        "is fetched on page load — SEC rate-limits to roughly 10 requests a "
+        "This is unexpected: a real S&P 500 dataset ships in the repository "
+        "at `data/sp500.db` and is used automatically when `DATABASE_URL` is "
+        "unset. Seeing this panel means that file is missing, or "
+        "`DATABASE_URL` points somewhere empty.\n\n"
+        "The app reads from a database a separate worker fills. Nothing is "
+        "fetched on page load — SEC rate-limits to roughly 10 requests a "
         "second, so a request-time pull would be slow and would get the "
         "deployment blocked."
     )

@@ -22,7 +22,27 @@ from typing import Any, Optional
 
 import pandas as pd
 
-DEFAULT_URL = "sqlite:///finmodel_web.db"
+def _default_url() -> str:
+    """Where to read from when DATABASE_URL is not set.
+
+    Prefers the dataset committed to the repository. A fresh deployment —
+    Streamlit Community Cloud, a container, a clone on someone else's laptop —
+    then has real S&P 500 data on first boot with nothing to configure.
+
+    This is why the file is committed rather than gitignored like every other
+    database here. Building the hosted path around a managed Postgres made
+    deployment a multi-step setup whose first step was signing up for a
+    database, when the whole dataset is about a megabyte and the app only ever
+    reads it. Postgres is still the right answer once the data needs to change
+    between deploys; it is the wrong first requirement.
+
+    Resolved against the package location, not the working directory, so it is
+    found whatever directory the app is launched from.
+    """
+    shipped = Path(__file__).resolve().parents[2] / "data" / "sp500.db"
+    if shipped.exists():
+        return "sqlite:///%s" % shipped
+    return "sqlite:///finmodel_web.db"
 
 SQLITE_DDL = """
 CREATE TABLE IF NOT EXISTS companies (
@@ -162,7 +182,7 @@ class Database:
     is_postgres: bool = False
 
     def __post_init__(self):
-        self.url = self.url or os.environ.get("DATABASE_URL", DEFAULT_URL)
+        self.url = self.url or os.environ.get("DATABASE_URL") or _default_url()
         self.is_postgres = self.url.startswith(("postgres://", "postgresql://"))
 
     # ---- connection ------------------------------------------------------

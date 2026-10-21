@@ -183,6 +183,61 @@ check("the gate opens when explicitly enabled",
       _data2["serves_market_data"] is True)
 _os.environ.pop("SERVE_MARKET_DATA", None)
 
+
+# --------------------------------------------------------------------------
+print()
+print("=" * 62)
+print("  PUBLISHABLE DATASET EXPORT (export_dataset.py)")
+print("=" * 62)
+
+import shutil as _shutil
+import sqlite3 as _sq
+from pathlib import Path as _P
+import export_dataset as _ed
+
+# Benchmarks and market rows must exist before the export can be shown to
+# remove them; the base fixture has neither.
+from finmodel.web.loader import compute_benchmarks as _cb
+db.upsert_market([{"cik": r["cik"], "price": 100.0, "market_cap": 1e9,
+                   "pe": 20.0, "source": "test"}
+                  for r in db.screen(limit=500)["rows"]])
+_cb(db, verbose=False)
+
+_t2 = _P(tempfile.mkdtemp(prefix="finmodel_export_"))
+_src = _t2 / "src.db"
+_shutil.copyfile(_P(tmp) / "t.db", _src)
+_res = _ed.export(_src, _t2 / "pub.db")
+
+_c = _sq.connect(_t2 / "pub.db")
+check("companies survive the export",
+      _res["after"]["companies"] > 0, "%d rows" % _res["after"]["companies"])
+check("filed history survives", _res["after"]["financial_history"] > 0,
+      "%d rows" % _res["after"]["financial_history"])
+
+# The point of the whole exercise: a public repository is redistribution,
+# and scraped price data is not ours to redistribute.
+check("market_data is emptied", _res["after"]["market_data"] == 0,
+      "was %d" % _res["before"]["market_data"])
+check("price-derived benchmarks are removed",
+      _c.execute("SELECT COUNT(*) FROM sector_benchmarks "
+                 "WHERE price_derived = 1").fetchone()[0] == 0)
+check("non-price benchmarks are kept",
+      _c.execute("SELECT COUNT(*) FROM sector_benchmarks").fetchone()[0] > 0,
+      "%d rows" % _res["after"]["sector_benchmarks"])
+_c.close()
+
+# And the stripped copy must still drive the app.
+_pub = Database("sqlite:///%s" % (_t2 / "pub.db"))
+_s = _pub.stats()
+check("the exported copy still answers stats", _s["companies"] > 0)
+check("it reports nothing priced", (_s["priced"] or 0) == 0)
+check("the screener still works on it", _pub.screen(limit=5)["total"] > 0)
+_tk = _pub.screen(limit=1)["rows"][0]["ticker"]
+check("a company page still resolves",
+      bool(_pub.company(_tk) and _pub.company(_tk)["history"]), _tk)
+_pub.close()
+_shutil.rmtree(_t2, ignore_errors=True)
+
 print("=" * 62)
 print("ALL PASSED" if not fails else "FAILURES: %s" % fails)
 sys.exit(1 if fails else 0)

@@ -15,19 +15,30 @@ Streamlit if you want a working site with the least moving parts.
 
 ---
 
-## Run it locally — three commands
+## Run it locally — two commands
 
 ```bash
 pip install -r requirements.txt
-python worker.py --seed          # demo data, no network, no SEC key
 streamlit run streamlit_app.py
 ```
 
-That opens http://localhost:8501 with 141 companies across 10 sectors.
+That opens http://localhost:8501 with **497 real S&P 500 companies**. The
+dataset ships in the repository at `data/sp500.db` and is used automatically
+when `DATABASE_URL` is unset, so there is nothing to load and no key to set
+before the app works.
 
-If you skip the seed step the app still starts — it shows an empty-state panel
-with a **Load demo data** button that does the same thing from inside the
-browser.
+That file is filings-only. `export_dataset.py` strips `market_data` and every
+price-derived benchmark before it is committed, because a public repository
+is redistribution and scraped price data is not ours to redistribute. The app
+hides those fields anyway unless `SERVE_MARKET_DATA=true`, so nothing is lost.
+To get them locally, run the worker against a database of your own:
+
+```bash
+export EDGAR_USER_AGENT="Your Name you@email.com"
+export DATABASE_URL="sqlite:///my.db"
+python worker.py --sp500
+SERVE_MARKET_DATA=true DATABASE_URL="sqlite:///my.db" streamlit run streamlit_app.py
+```
 
 ### With real filings instead of the demo set
 
@@ -69,33 +80,27 @@ Company pages are shareable: `?ticker=MU` selects a company from the URL.
 It installs from `requirements.txt` and serves at
 `https://<name>.streamlit.app`.
 
-### The one thing that will catch you out: storage is ephemeral
+### You do not need a database
 
-Streamlit Cloud restarts containers freely, and anything written to local disk
-is lost when it does. A SQLite file seeded on first run **will disappear**, and
-the app will show the empty-state panel again.
+Streamlit Cloud restarts containers freely and anything written to local disk
+is lost, which is why this used to require managed Postgres before the app
+could show anything. It does not any more: the dataset is committed to the
+repository, so a fresh container has real data the moment it boots. Nothing to
+provision, nothing to pay for, no secrets to set.
 
-Two ways to deal with it, depending on what you want:
-
-**Demo deployment** — do nothing. The empty-state panel has a *Load demo data*
-button; the data is generated offline in a few seconds. Fine for showing the
-app to someone. Not fine as a real site.
-
-**Real deployment** — use managed Postgres. [Neon](https://neon.tech) and
-[Supabase](https://supabase.com) both have free tiers large enough; this
-dataset is a few hundred megabytes for the whole US market. Then in your app's
-**Settings → Secrets** paste:
+**When you do want Postgres** is when the data must change between deploys —
+a nightly refresh updating a live site rather than a dataset that moves when
+CI rebuilds it. [Neon](https://neon.tech) and [Supabase](https://supabase.com)
+both have free tiers large enough. Then in **Settings → Secrets**:
 
 ```toml
 DATABASE_URL = "postgresql://user:password@host/dbname"
 EDGAR_USER_AGENT = "Your Name you@email.com"
 ```
 
-Streamlit exposes secrets as environment variables, which is exactly what
-`finmodel.web.store.Database` reads — no code change. Run the worker against
-the same `DATABASE_URL` from your own machine (or the `refresh-data.yml` GitHub
-Action, which already takes both as repository secrets) and the deployed app
-serves whatever the worker last wrote.
+Streamlit exposes secrets as environment variables, which is what
+`finmodel.web.store.Database` reads — no code change. `DATABASE_URL` takes
+precedence over the shipped file.
 
 ### Secrets never go in the repo
 
