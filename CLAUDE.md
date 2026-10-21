@@ -339,3 +339,35 @@ so a `--limit` smoke run is a legitimate use.
 throwaway SQLite. It is the only place the real pipeline executes: the
 development sandbox reaches neither SEC nor Yahoo. Smoke-test with a small
 `limit` before the full ~503-name run.
+
+## Revenue is resolved by MAX, not first-wins (concepts.SUBSET_MAX)
+
+A full S&P 500 run reported a 9,587% operating margin for Essex Property
+Trust: revenue $9.38M against operating income $899M. Every REIT and insurer
+in the index was distorted the same way (UDR, EXR, CCI, AMT, MetLife).
+
+The cause is accounting, not parsing. `RevenueFromContractWithCustomer
+ExcludingAssessedTax` is ASC 606 revenue. A property trust books rental
+income under ASC 842 and an insurer books premiums under ASC 944, so that
+tag holds only a sliver of their total while `Revenues` holds all of it. The
+chain listed the ASC 606 tag first and `_merge_by_priority` takes the first
+tag that carries data.
+
+- **Revenue now resolves to the LARGEST candidate** (`_merge_by_max`), because
+  every alternative revenue concept is a subset of total revenue. Reordering
+  the chain alone would have been luck, not a rule: it only helps when the
+  fuller tag happens to sit earlier.
+- **This applies to revenue and nothing else.** `SUBSET_MAX = {"revenue"}`.
+  There is no subset argument for costs or income lines, and taking the
+  largest there would silently prefer the broadest expense definition on
+  offer. Do not add items to that set without one.
+- **The 350-380 day period filter still applies first**, so "largest" cannot
+  reach for a multi-year cumulative figure. `test_concepts.py` asserts it.
+- **The chain gained REIT and insurer tags**: RealEstateRevenueNet,
+  OperatingLeaseLeaseIncome, RevenuesNetOfInterestExpense.
+- Single-tag filers are unaffected — Micron still resolves to $37.38B.
+
+This class of bug is invisible on synthetic data and invisible on any single
+company you happen to check. It took running the real index and plotting the
+range of every metric to find it, which is what `validate_real_data.py` is
+for.

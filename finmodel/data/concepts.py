@@ -15,10 +15,19 @@ Concepts are split by statement and by period type:
 # Income statement (duration concepts)
 # ---------------------------------------------------------------------------
 INCOME_STATEMENT = {
+    # Order matters less here than SUBSET_MAX below: revenue is resolved by
+    # taking the LARGEST candidate, not the first. See the note on SUBSET_MAX.
     "revenue": [
-        "RevenueFromContractWithCustomerExcludingAssessedTax",
         "Revenues",
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
         "SalesRevenueNet",
+        # Property trusts book most income as lease revenue under ASC 842,
+        # which is not revenue from contracts with customers.
+        "RealEstateRevenueNet",
+        "OperatingLeaseLeaseIncome",
+        # Banks and insurers: premiums and net investment income sit outside
+        # ASC 606 as well.
+        "RevenuesNetOfInterestExpense",
         "RevenueFromContractWithCustomerIncludingAssessedTax",
     ],
     "cogs": [
@@ -134,3 +143,28 @@ ALL_MAPS = {
     "balance_sheet": BALANCE_SHEET,
     "cash_flow": CASH_FLOW,
 }
+
+
+# ---------------------------------------------------------------------------
+# Line items resolved by taking the LARGEST candidate, not the first
+# ---------------------------------------------------------------------------
+# For most line items the first tag that carries data is the right answer.
+# Revenue is different, because several of the candidate concepts are
+# deliberately *partial* by accounting standard:
+#
+#   RevenueFromContractWithCustomerExcludingAssessedTax is ASC 606 revenue.
+#   A property trust books rental income under ASC 842 and an insurer books
+#   premiums under ASC 944, so for them this tag captures only a sliver —
+#   management fees, say — while `Revenues` carries the total.
+#
+# A real S&P 500 run showed what first-wins ordering does with that: Essex
+# Property Trust came back with $9.38M of revenue against $899M of operating
+# income, a 9,587% operating margin, and every REIT and insurer in the index
+# was distorted the same way. Reordering alone is fragile, because it only
+# helps when the fuller tag happens to sit earlier.
+#
+# Taking the maximum is principled rather than lucky: each alternative is a
+# subset of total revenue, so the largest candidate is the most complete one.
+# The period filter (350-380 days) already rules out multi-year figures, so
+# "largest" cannot pick up a cumulative value.
+SUBSET_MAX = {"revenue"}

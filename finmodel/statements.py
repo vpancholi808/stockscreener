@@ -13,7 +13,7 @@ from typing import Optional
 
 import pandas as pd
 
-from .data.concepts import ALL_MAPS, INSTANT_ITEMS
+from .data.concepts import ALL_MAPS, INSTANT_ITEMS, SUBSET_MAX
 
 
 def _parse(d: str) -> date:
@@ -84,6 +84,24 @@ def _merge_by_priority(facts: dict, tags: list[str], instant: bool,
     return merged
 
 
+def _merge_by_max(facts: dict, tags: list[str], instant: bool,
+                  as_of: str | None = None) -> dict[int, float]:
+    """Fill each year with the LARGEST candidate rather than the first.
+
+    Only for line items in concepts.SUBSET_MAX, where the alternative tags
+    are partial by accounting standard rather than merely different. A REIT
+    that reports both `Revenues` and ASC 606 contract revenue is reporting a
+    total and a fraction of it; first-wins ordering can pick the fraction,
+    and the resulting margin is nonsense. See the note in concepts.py.
+    """
+    merged: dict[int, float] = {}
+    for tag in tags:
+        for year, val in _annual_values_for_tag(facts, tag, instant, as_of).items():
+            if year not in merged or val > merged[year]:
+                merged[year] = val
+    return merged
+
+
 @dataclass
 class Financials:
     ticker: str
@@ -122,7 +140,8 @@ def build_financials(facts: dict, ticker: str = "", n_years: int = 5,
         rows: dict[str, dict[int, float]] = {}
         for item, tags in mapping.items():
             instant = item in INSTANT_ITEMS
-            rows[item] = _merge_by_priority(facts, tags, instant, as_of)
+            merge = _merge_by_max if item in SUBSET_MAX else _merge_by_priority
+            rows[item] = merge(facts, tags, instant, as_of)
             all_years.update(rows[item].keys())
         statements[stmt_name] = rows
 
