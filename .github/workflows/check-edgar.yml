@@ -72,8 +72,12 @@ jobs:
           # 1. Can this runner reach SEC at all, with a proper User-Agent?
           try:
               import requests
+              raw_was_dirty = (ua != " ".join(ua.split()))
+              note("0-secret-hygiene", "raw secret needed whitespace repair: %s"
+                   % raw_was_dirty)
               r = requests.get("https://www.sec.gov/files/company_tickers.json",
-                               headers={"User-Agent": ua}, timeout=30)
+                               headers={"User-Agent": " ".join(ua.split())},
+                               timeout=30)
               note("1-raw-https", "HTTP %d, %d bytes, server=%s"
                    % (r.status_code, len(r.content),
                       r.headers.get("server", "?")))
@@ -112,6 +116,32 @@ jobs:
           except Exception as exc:
               fail("4-model", "%s: %s" % (type(exc).__name__, exc))
               traceback.print_exc()
+
+          # 5. The revenue series itself. A single odd year points at a tag
+          #    change or a restatement; every year wrong points at parsing.
+          try:
+              fin = model.financials
+              row = fin.income_statement.loc["revenue"]
+              note("5-revenue-series", " | ".join(
+                  "FY%s $%.2fB" % (y, row[y] / 1e9) for y in fin.years))
+              ni = fin.income_statement.loc["net_income"]
+              note("5-net-income", " | ".join(
+                  "FY%s $%.2fB" % (y, ni[y] / 1e9) for y in fin.years))
+              import json as _json
+              facts = client.company_facts("MU")["facts"]["us-gaap"]
+              for tag in ("RevenueFromContractWithCustomerExcludingAssessedTax",
+                          "Revenues", "SalesRevenueNet"):
+                  if tag in facts:
+                      rows = [f for f in facts[tag]["units"]["USD"]
+                              if f.get("form") == "10-K" and f.get("fp") == "FY"]
+                      recent = sorted(rows, key=lambda f: f["end"])[-3:]
+                      note("5-tag-%s" % tag[:28], " | ".join(
+                          "%s..%s fy%s $%.2fB" % (f.get("start", "?")[:10],
+                                                  f["end"][:10], f.get("fy"),
+                                                  f["val"] / 1e9)
+                          for f in recent))
+          except Exception as exc:
+              fail("5-revenue-series", "%s: %s" % (type(exc).__name__, exc))
 
           print("::notice::SUMMARY failed=%s" % (",".join(failed) or "none"))
           sys.exit(1 if failed else 0)
