@@ -31,7 +31,7 @@ from . import quant
 from .quant import (Universe, MarkowitzOptimizer, Portfolio, risk_report,
                     stress_test, bs_price, bs_greeks, implied_vol, FactorModel,
                     CapitalAllocationLine, CompletePortfolio, FrontierGeometry,
-                    NoTangencyPortfolio)
+                    NoTangencyPortfolio, PortfolioDiagnosis)
 from .data.prices import (PriceFeed, YFinancePriceFeed, FramePriceFeed,
                           to_returns, periods_per_year)
 from .data.yahoo import (PriceDownload, download_prices, audit_prices,

@@ -232,7 +232,64 @@ with sync_playwright() as p:
           abs(js["cond"] - want) / want < 1e-6,
           "%.6f vs %.6f" % (js["cond"], want))
 
-    print("\n8) THE ARTIFACT BUILD IS A FRAGMENT, NOT A DOCUMENT")
+    print("\n8) THE PORTFOLIO DIAGNOSIS MATCHES THE PYTHON")
+    DIAG_JS = """
+    (args) => {
+      const {mu, sd, rho, rf, w} = args;
+      const S = sd.map((a,i)=>sd.map((b,j)=>a*b*(i===j?1:rho)));
+      const g = window.__model.geometry(mu, S);
+      const tan = window.__model.tangency(g, mu, S, rf);
+      const d = window.__model.diagnose(g, mu, S, rf, w, tan);
+      return {r:d.r, v:d.v, sharpe:d.sharpe, cash:d.cash,
+              frontierReturn:d.frontierReturn, returnGap:d.returnGap,
+              frontierVol:d.frontierVol, volGap:d.volGap,
+              calReturn:d.calReturn, calGap:d.calGap,
+              sharpeGap:d.sharpeGap, calW:d.calW, calCash:d.calCash};
+    }
+    """
+    for label, holding, rf_ in (
+            ("growth-concentrated", [0.10, 0.20, 0.60, 0.10], 0.02),
+            ("equal weight",        [0.25, 0.25, 0.25, 0.25], 0.02),
+            ("half in cash",        [0.10, 0.15, 0.15, 0.10], 0.02),
+            ("levered",             [0.30, 0.40, 0.40, 0.30], 0.02)):
+        jd = page.evaluate(DIAG_JS, dict(args, rf=rf_, w=holding))
+        pd_ = python_model(rf_).diagnose(dict(zip(NAMES, holding)))
+        pairs = [
+            ("expected return", jd["r"], pd_.expected_return),
+            ("volatility", jd["v"], pd_.volatility),
+            ("Sharpe", jd["sharpe"], pd_.sharpe),
+            ("cash weight", jd["cash"], pd_.cash_weight),
+            ("frontier return", jd["frontierReturn"], pd_.frontier_return),
+            ("return gap", jd["returnGap"], pd_.return_gap),
+            ("frontier volatility", jd["frontierVol"], pd_.frontier_volatility),
+            ("volatility gap", jd["volGap"], pd_.volatility_gap),
+            ("CAL return", jd["calReturn"], pd_.cal_return),
+            ("CAL gap", jd["calGap"], pd_.cal_gap),
+            ("Sharpe gap", jd["sharpeGap"], pd_.sharpe_gap),
+            ("CAL cash", jd["calCash"], pd_.cal_cash_weight),
+        ]
+        bad = [n for n, a, b in pairs
+               if (a is None) != (b is None)
+               or (a is not None and not close(a, b, 1e-9))]
+        check("%s: all 12 figures agree" % label, not bad,
+              "disagree: %s" % ", ".join(bad) if bad else
+              "gap %.4f%%, Sharpe shortfall %.4f"
+              % ((pd_.return_gap or 0) * 100, pd_.sharpe_gap or 0))
+        if pd_.cal_weights is not None:
+            dw = max(abs(a - b) for a, b in
+                     zip(jd["calW"], pd_.cal_weights.to_numpy()))
+            check("%s: CAL-matched weights agree" % label, dw < 1e-10,
+                  "max diff %.2e" % dw)
+
+    # The diagnosis must agree with the rest of the page's own model.
+    jd = page.evaluate(DIAG_JS, dict(args, w=[0.10, 0.20, 0.60, 0.10]))
+    check("a held portfolio sits at or below the frontier return",
+          jd["returnGap"] >= -1e-12)
+    check("and at or below the CAL", jd["calGap"] >= -1e-12)
+    check("the CAL gap is at least the frontier gap",
+          jd["calGap"] >= jd["returnGap"] - 1e-12)
+
+    print("\n9) THE ARTIFACT BUILD IS A FRAGMENT, NOT A DOCUMENT")
     # The Artifact platform wraps the file in its own skeleton and sets the
     # theme on the root element. A second <html>/<body>, or a theme toggle
     # fighting the host's data-theme, both break it.

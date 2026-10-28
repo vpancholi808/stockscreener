@@ -247,6 +247,14 @@ print(cal.return_at(0.15))              # rf + slope * sigma
 print(opt.complete_portfolio(risk_aversion=3.0))
 print(opt.complete_portfolio(target_volatility=0.10))
 
+# --- Diagnosing a book you already hold ---
+d = opt.diagnose({"AAPL": 0.4, "MSFT": 0.35, "XOM": 0.25})
+print(d.summary())
+print(d.return_gap)        # return given up at the volatility already carried
+print(d.volatility_gap)    # risk carried for no extra return
+print(d.sharpe_gap)        # shortfall against the CAL
+print(d.trades())          # weight changes that close it, cash as the balance
+
 # --- Risk: VaR / CVaR / stress ---
 from finmodel.quant import portfolio_returns
 w = cal.tangency.weights                    # or opt.tangency(long_only=True)
@@ -297,6 +305,16 @@ Method notes worth knowing:
   suite verifies the gap bottoms out at the tangency volatility. The same line
   is the Capital Market Line when the tangency portfolio is the market
   portfolio.
+- **`diagnose(weights)` answers three different questions**, which get
+  conflated: return given up at the volatility already carried
+  (`return_gap`), risk carried for no extra return (`volatility_gap`), and the
+  shortfall against the CAL (`sharpe_gap`). The first two measure one
+  inefficiency in two units; the third is the one that does not change as the
+  book is levered up or down, which is why it is the honest headline. Weights
+  summing to less than one leave the remainder in cash at rf. A portfolio with
+  enough cash can sit below the GMV volatility, where no fully-invested risky
+  portfolio exists — `frontier_return` and `return_gap` are then `None` rather
+  than a wrong number, and only the CAL comparison applies.
 - **Complete portfolios** split between rf and the tangency portfolio:
   y* = (E[r_t] − rf)/(A·σ_t²) maximises E[r] − (A/2)σ². Sharpe is constant along
   the line — y changes how much risk you carry, never how well you are paid for

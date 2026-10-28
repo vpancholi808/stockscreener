@@ -300,6 +300,43 @@ elif float(lo_w.rstrip("%")) <= float(hi_w.rstrip("%")):
 else:
     ok("risk aversion sets the split (%s at A=1.5, %s at A=10)" % (lo_w, hi_w))
 
+# The held-portfolio diagnosis must agree with the library, not just render.
+# Three surfaces compute this now — library, Streamlit, static page — and the
+# whole point of the diagnosis is the number.
+at = frontier_at()
+labels = {m.label: m.value for m in at.metric}
+want = {"Return given up", "Volatility carried for nothing", "Below the CAL"}
+if not want <= set(labels):
+    fail("diagnosis metrics missing: %s" % (want - set(labels)))
+else:
+    import pandas as _pd  # noqa: E402
+    import numpy as _np  # noqa: E402
+    from finmodel.quant import MarkowitzOptimizer as _MO  # noqa: E402
+    _names = ["Short bonds", "Broad equity", "Growth equity", "Real assets"]
+    _mu = _pd.Series([.04, .08, .12, .10], index=_names)
+    _sd = _np.array([.10, .18, .30, .22])
+    _c = _np.full((4, 4), 0.35)
+    _np.fill_diagonal(_c, 1.0)
+    _cov = _pd.DataFrame(_np.outer(_sd, _sd) * _c, index=_names, columns=_names)
+    _d = _MO(_mu, _cov, rf=0.02).diagnose(
+        dict(zip(_names, [.10, .20, .60, .10])))
+    pairs = [("Return given up", _d.return_gap),
+             ("Volatility carried for nothing", _d.volatility_gap),
+             ("Below the CAL", _d.cal_gap)]
+    bad = [n for n, v in pairs
+           if abs(float(labels[n].rstrip("%")) / 100 - v) > 5e-5]
+    if bad:
+        fail("diagnosis disagrees with the library: %s" % bad)
+    else:
+        ok("diagnosis matches the library (%s given up, %s excess vol)"
+           % (labels["Return given up"],
+              labels["Volatility carried for nothing"]))
+
+    if not any("Inside the frontier" in w.value for w in at.warning):
+        fail("an inefficient default holding was not flagged")
+    else:
+        ok("an inefficient holding is flagged as inside the frontier")
+
 # --------------------------------------------------------------------------
 print()
 if failures:

@@ -33,6 +33,9 @@ DEFAULT = pd.DataFrame({
     "Asset": ["Short bonds", "Broad equity", "Growth equity", "Real assets"],
     "Expected return %": [4.0, 8.0, 12.0, 10.0],
     "Volatility %": [10.0, 18.0, 30.0, 22.0],
+    # Deliberately concentrated in the high-return, high-volatility asset —
+    # the most common way a real book ends up inside the frontier.
+    "You hold %": [10.0, 20.0, 60.0, 10.0],
 })
 
 st.title("Efficient frontier and the CAL")
@@ -78,7 +81,7 @@ source = st.radio(
          "yours to set — they are the hard part to estimate.",
 )
 
-mu = cov = None
+mu = cov = held = None
 labels: list[str] = []
 
 if source == "My assumptions":
@@ -92,6 +95,10 @@ if source == "My assumptions":
                     format="%.2f", step=0.5),
                 "Volatility %": st.column_config.NumberColumn(
                     format="%.2f", step=0.5, min_value=0.01),
+                "You hold %": st.column_config.NumberColumn(
+                    format="%.1f", step=5.0,
+                    help="Your actual weights. Anything under 100% in total "
+                         "is treated as cash at the risk-free rate."),
             },
             key="assumptions")
     tbl = edited.dropna(subset=["Asset"])
@@ -117,6 +124,10 @@ if source == "My assumptions":
                        index=labels)
         sd = (tbl["Volatility %"].astype(float) / 100).to_numpy()
         cov = pd.DataFrame(uniform_cov(sd, rho), index=labels, columns=labels)
+        if "You hold %" in tbl:
+            held = pd.Series(
+                (tbl["You hold %"].fillna(0).astype(float) / 100).to_numpy(),
+                index=labels)
 else:
     st.caption(
         "A CSV with a date column first and one price column per asset. "
@@ -310,7 +321,70 @@ st.caption(note)
 # --------------------------------------------------------------------------
 # weights and the complete portfolio
 # --------------------------------------------------------------------------
-st.subheader("Weights")
+if held is not None and float(held.abs().sum()) > 0:
+    d = opt.diagnose(held)
+    st.subheader("Your portfolio against the frontier")
+
+    if d.return_gap is None:
+        st.info(
+            f"At {d.volatility:.2%} volatility this sits below the "
+            f"minimum-variance portfolio's {geo.gmv_volatility:.2%}, which "
+            f"only a cash position can reach. No fully-invested risky "
+            f"portfolio exists at this risk, so the frontier comparison does "
+            f"not apply — compare against the CAL instead.", icon="💵")
+    elif d.is_efficient:
+        st.success("On the efficient frontier.", icon="✅")
+    else:
+        st.warning(
+            f"Inside the frontier: this mix gives up "
+            f"**{d.return_gap:.2%}** of return at the "
+            f"{d.volatility:.2%} volatility it already carries.", icon="📉")
+
+    g1, g2, g3 = st.columns(3)
+    g1.metric("Return given up",
+              "—" if d.return_gap is None else f"{d.return_gap:.2%}",
+              None if d.return_gap is None
+              else f"frontier pays {d.frontier_return:.2%}",
+              delta_color="off")
+    g2.metric("Volatility carried for nothing", f"{d.volatility_gap:.2%}",
+              f"same return at {d.frontier_volatility:.2%}",
+              delta_color="off")
+    g3.metric("Below the CAL",
+              "—" if d.cal_gap is None else f"{d.cal_gap:.2%}",
+              None if d.sharpe_gap is None
+              else f"Sharpe shortfall {d.sharpe_gap:.3f}",
+              delta_color="off")
+
+    st.caption(
+        f"Holding {d.expected_return:.2%} expected return at "
+        f"{d.volatility:.2%} volatility, Sharpe "
+        + ("—" if d.sharpe != d.sharpe else f"{d.sharpe:.3f}")
+        + (f", with {d.cash_weight:.1%} in cash."
+           if abs(d.cash_weight) > 1e-9 else ".")
+        + " The first two figures measure one inefficiency in two units and "
+          "both are real. Neither is a forecast: they follow from the "
+          "expected returns and volatilities above."
+    )
+
+    if d.cal_weights is not None:
+        moves = pd.DataFrame({
+            "Asset": list(d.weights.index) + ["Cash"],
+            "You hold": list(d.weights.to_numpy()) + [d.cash_weight],
+            "On the CAL": list(d.cal_weights.to_numpy()) + [d.cal_cash_weight],
+        })
+        moves["Trade"] = moves["On the CAL"] - moves["You hold"]
+        st.dataframe(
+            moves.style.format({c: "{:+.1%}" if c == "Trade" else "{:.1%}"
+                                for c in ("You hold", "On the CAL", "Trade")}),
+            width="stretch", hide_index=True)
+        st.caption(
+            "The CAL column is the tangency portfolio scaled to the "
+            "volatility you already carry, so it changes what you own "
+            "without changing how much risk you run. Every other route to "
+            "the frontier either raises your risk or lowers your return."
+        )
+
+st.subheader("Reference portfolios")
 w = pd.DataFrame({"Asset": list(mu.index),
                   "Minimum variance": gmv.weights.to_numpy()})
 if cal is not None:

@@ -241,7 +241,85 @@ with warnings.catch_warnings():
 check(f"long_only=True still returns a maximum ({lo_hi.sharpe:.4f})",
       np.isfinite(lo_hi.sharpe))
 
-print("\n7) COVARIANCE AND INPUT HANDLING")
+print("\n7) DIAGNOSING A HELD PORTFOLIO")
+# A portfolio already on the frontier must report no gap; one on the CAL must
+# report no Sharpe shortfall. Everything else must report a non-negative gap,
+# because the frontier is a bound.
+d_gmv = opt.diagnose(gmv.weights)
+check(f"a frontier portfolio shows no return gap ({d_gmv.return_gap:.2e})",
+      d_gmv.return_gap < 1e-9 and d_gmv.is_efficient)
+check(f"and no volatility gap ({d_gmv.volatility_gap:.2e})",
+      d_gmv.volatility_gap < 1e-9)
+check(f"but does fall short of the CAL ({d_gmv.sharpe_gap:.4f})",
+      abs(d_gmv.sharpe_gap - (tan.sharpe - gmv.sharpe)) < 1e-9)
+
+d_tan = opt.diagnose(tan.weights)
+check(f"the tangency portfolio is on the CAL ({d_tan.sharpe_gap:.2e})",
+      d_tan.is_on_cal and d_tan.is_efficient)
+
+# Equal weights: a real, inefficient portfolio.
+eq = pd.Series([0.25] * 4, index=ASSETS)
+d_eq = opt.diagnose(eq)
+check(f"equal weights is not efficient (gives up "
+      f"{d_eq.return_gap:.2%} at {d_eq.volatility:.2%} vol)",
+      not d_eq.is_efficient and d_eq.return_gap > 0)
+check("every gap is non-negative",
+      d_eq.return_gap >= 0 and d_eq.volatility_gap >= 0
+      and d_eq.cal_gap >= 0 and d_eq.sharpe_gap >= 0)
+check(f"the efficient portfolio at that risk really is on the frontier "
+      f"({abs(geo.volatility_at(d_eq.frontier_return) - d_eq.volatility):.2e})",
+      abs(geo.volatility_at(d_eq.frontier_return) - d_eq.volatility) < 1e-9)
+rep = opt.diagnose(d_eq.efficient_weights)
+check(f"and diagnosing it back reports no gap ({rep.return_gap:.2e})",
+      rep.return_gap < 1e-8)
+check(f"least risk for that return is lower ({d_eq.frontier_volatility:.4f} "
+      f"< {d_eq.volatility:.4f})", d_eq.frontier_volatility < d_eq.volatility)
+check("the CAL gap exceeds the frontier gap at the same risk",
+      d_eq.cal_gap >= d_eq.return_gap - 1e-12)
+
+# The trade list must actually land on the CAL.
+moved = d_eq.weights + d_eq.trades()
+check("trades reproduce the CAL-matched weights",
+      np.allclose(moved.to_numpy(), d_eq.cal_weights.to_numpy(), atol=1e-12))
+d_moved = opt.diagnose(moved, cash=d_eq.cal_cash_weight)
+check(f"and that portfolio is on the CAL ({d_moved.sharpe_gap:.2e})",
+      d_moved.is_on_cal)
+check(f"at the same volatility it started with "
+      f"({d_moved.volatility:.6f} vs {d_eq.volatility:.6f})",
+      abs(d_moved.volatility - d_eq.volatility) < 1e-9)
+
+# A cash position can sit below the GMV volatility, where no fully-invested
+# risky portfolio exists and the frontier comparison is undefined.
+half = opt.diagnose(tan.weights * 0.4)
+check(f"a heavy cash position drops below GMV volatility "
+      f"({half.volatility:.4f} < {geo.gmv_volatility:.4f})",
+      half.volatility < geo.gmv_volatility)
+check("the frontier comparison is None there, not a wrong number",
+      half.return_gap is None and half.frontier_return is None)
+check(f"the CAL comparison still applies and is tight ({half.sharpe_gap:.2e})",
+      half.sharpe_gap is not None and half.sharpe_gap < 1e-9)
+check(f"cash weight is inferred ({half.cash_weight:.4f})",
+      abs(half.cash_weight - 0.6) < 1e-9)
+
+# Input shapes and a name that is not in the universe.
+check("accepts a dict of weights",
+      abs(opt.diagnose({a: 0.25 for a in ASSETS}).volatility
+          - d_eq.volatility) < 1e-12)
+check("assets left out are held at zero",
+      abs(opt.diagnose({"A": 1.0}).volatility - SD[0]) < 1e-9)
+try:
+    opt.diagnose({"NOPE": 1.0})
+    check("an unknown asset must raise", False)
+except ValueError:
+    check("an unknown asset raises", True)
+
+# With rf above the GMV return there is no CAL to measure against.
+no_cal = hi.diagnose(eq)
+check("no CAL leaves the CAL fields None, and the frontier ones intact",
+      no_cal.sharpe_gap is None and no_cal.cal_weights is None
+      and no_cal.return_gap is not None)
+
+print("\n8) COVARIANCE AND INPUT HANDLING")
 R = pd.DataFrame(np.random.default_rng(3).normal(0, 0.05, (60, 8)),
                  columns=list("ABCDEFGH"))
 lw = ledoit_wolf_cov(R)

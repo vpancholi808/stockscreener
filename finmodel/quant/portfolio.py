@@ -147,6 +147,106 @@ class CompletePortfolio:
 
 
 @dataclass
+class PortfolioDiagnosis:
+    """Where a portfolio someone actually holds sits against the frontier.
+
+    Three separate questions, because they have different answers and people
+    conflate them:
+
+      * **Return given up at the same risk.** Holding this volatility, the
+        efficient branch would have paid `frontier_return`. The difference is
+        what the current mix costs in return for risk already being carried.
+      * **Risk carried for the same return.** The minimum-variance portfolio
+        with this expected return has volatility `frontier_volatility`. The
+        difference is risk taken for nothing.
+      * **Shortfall against the CAL.** Once a risk-free asset exists the
+        frontier stops being the benchmark: mixing cash with the tangency
+        portfolio beats every frontier portfolio but one. `sharpe_gap` is the
+        honest measure, because it does not change as you lever up or down.
+
+    A portfolio holding cash can sit at a volatility below the global
+    minimum-variance portfolio, where no fully-invested risky portfolio
+    exists. The frontier comparison is then undefined and comes back None;
+    the CAL comparison still applies, which is the point of the CAL.
+    """
+    weights: pd.Series
+    cash_weight: float
+    expected_return: float
+    volatility: float
+    sharpe: float
+    risk_free: float
+
+    frontier_return: Optional[float]        # best return at this volatility
+    return_gap: Optional[float]             # how much is being left on the table
+    efficient_weights: Optional[pd.Series]  # the mix that would earn it
+
+    frontier_volatility: float              # least risk for this return
+    volatility_gap: float                   # risk carried for nothing
+
+    cal_return: Optional[float]             # the CAL's return at this volatility
+    cal_gap: Optional[float]
+    sharpe_gap: Optional[float]             # best Sharpe minus this one
+    cal_weights: Optional[pd.Series]        # tangency scaled to this volatility
+    cal_cash_weight: Optional[float]
+
+    @property
+    def is_efficient(self) -> bool:
+        """True when the portfolio is on the efficient branch, to 1bp."""
+        return self.return_gap is not None and self.return_gap <= 1e-4
+
+    @property
+    def is_on_cal(self) -> bool:
+        return self.sharpe_gap is not None and self.sharpe_gap <= 1e-4
+
+    def trades(self) -> pd.Series:
+        """Weight changes that move this portfolio onto the CAL.
+
+        Positive is buy, negative is sell. The cash leg is the balancing
+        item and is reported separately as `cal_cash_weight`.
+        """
+        if self.cal_weights is None:
+            return pd.Series(dtype=float)
+        return (self.cal_weights - self.weights).rename("trade")
+
+    def summary(self) -> str:
+        lines = [
+            f"Held:      E[r]={self.expected_return:.2%}  "
+            f"vol={self.volatility:.2%}  Sharpe={self.sharpe:.3f}"
+            + (f"  (cash {self.cash_weight:.1%})"
+               if abs(self.cash_weight) > 1e-9 else ""),
+        ]
+        if self.return_gap is None:
+            lines.append(
+                "  Below the minimum-variance volatility, which only a cash "
+                "position can reach — no fully-invested risky portfolio "
+                "exists at this risk, so the frontier comparison does not "
+                "apply. Compare against the CAL.")
+        elif self.is_efficient:
+            lines.append("  On the efficient frontier.")
+        else:
+            lines.append(
+                f"  Giving up {self.return_gap:.2%} of return at this "
+                f"volatility (efficient: {self.frontier_return:.2%}).")
+        lines.append(
+            f"  Carrying {self.volatility_gap:.2%} more volatility than "
+            f"needed for this return (minimum: "
+            f"{self.frontier_volatility:.2%}).")
+        if self.sharpe_gap is None:
+            lines.append("  No tangency portfolio exists at this risk-free "
+                         "rate, so there is no CAL to compare against.")
+        elif self.is_on_cal:
+            lines.append("  On the capital allocation line.")
+        else:
+            lines.append(
+                f"  {self.cal_gap:.2%} below the CAL at this volatility; "
+                f"Sharpe shortfall {self.sharpe_gap:.3f}.")
+        return "\n".join(lines)
+
+    def __str__(self) -> str:
+        return self.summary()
+
+
+@dataclass
 class FrontierGeometry:
     """The four scalars that determine the whole minimum-variance frontier.
 
@@ -196,6 +296,21 @@ class FrontierGeometry:
 
     def volatility_at(self, target_return: float) -> float:
         return math.sqrt(max(self.variance_at(target_return), 0.0))
+
+    def return_at_volatility(self, volatility: float) -> Optional[float]:
+        """The efficient branch's return at a given volatility, or None.
+
+        Inverting sigma^2(r) = (A r^2 - 2B r + C)/D gives
+        r = (B +/- sqrt(B^2 - A(C - D sigma^2))) / A, and the upper branch
+        takes the plus. The discriminant is non-negative exactly when
+        sigma >= sqrt(1/A), so a volatility below the global minimum-variance
+        portfolio's returns None rather than a complex number: no portfolio
+        of these assets reaches it.
+        """
+        disc = self.b ** 2 - self.a * (self.c - self.d * volatility ** 2)
+        if disc < 0:
+            return None
+        return (self.b + math.sqrt(disc)) / self.a
 
     def is_efficient(self, target_return: float) -> bool:
         return target_return >= self.gmv_return - _TOL
@@ -479,6 +594,79 @@ class MarkowitzOptimizer:
             .complete_portfolio(risk_aversion=risk_aversion,
                                 target_volatility=target_volatility,
                                 target_return=target_return)
+
+    # ---- diagnosing a portfolio someone holds ----------------------------
+    def diagnose(self, weights, cash: Optional[float] = None
+                 ) -> PortfolioDiagnosis:
+        """Measure a held portfolio against the frontier and the CAL.
+
+        `weights` maps asset to weight — a dict, a Series, or a sequence in
+        the optimizer's asset order. Assets left out are held at zero.
+
+        Weights that sum to less than one leave the remainder in cash at the
+        risk-free rate; more than one means borrowing there. Pass `cash`
+        explicitly to state it rather than infer it, in which case the risky
+        weights are used as given and the two need not sum to one.
+
+        The answer is a gap, never a recommendation: it says what the stated
+        assumptions imply about this mix, and those assumptions are the
+        user's. Change mu and every number here changes.
+        """
+        if isinstance(weights, dict):
+            w = pd.Series(weights, dtype=float)
+        elif isinstance(weights, pd.Series):
+            w = weights.astype(float)
+        else:
+            w = pd.Series(np.asarray(weights, dtype=float), index=self.assets)
+        unknown = [a for a in w.index if a not in set(self.assets)]
+        if unknown:
+            raise ValueError("not in the universe: %s" % ", ".join(map(str, unknown)))
+        w = w.reindex(self.assets).fillna(0.0)
+        wv = w.to_numpy()
+
+        risky = float(wv.sum())
+        cash_w = float(cash) if cash is not None else 1.0 - risky
+
+        r = float(wv @ self.mu) + cash_w * self.rf
+        v = float(np.sqrt(max(wv @ self.cov @ wv, 0.0)))
+        s = (r - self.rf) / v if v > _TOL else float("nan")
+
+        g = self.geometry()
+
+        # Best return available at this volatility, on the efficient branch.
+        fr = g.return_at_volatility(v)
+        gap = None if fr is None else max(fr - r, 0.0)
+        eff_w = None
+        if fr is not None:
+            eff_w = self.target_return(fr).weights
+
+        # Least volatility that still earns this return. Below the GMV return
+        # the efficient answer is the GMV portfolio itself: it has less risk
+        # AND more return, so that is the honest comparison.
+        target = max(r, g.gmv_return)
+        fv = g.volatility_at(target)
+        vgap = max(v - fv, 0.0)
+
+        cal_r = cal_gap = sgap = cal_w = cal_cash = None
+        try:
+            cal = self.capital_allocation_line()
+        except NoTangencyPortfolio:
+            pass
+        else:
+            cal_r = cal.return_at(v)
+            cal_gap = max(cal_r - r, 0.0)
+            sgap = max(cal.slope - s, 0.0) if s == s else None
+            y = v / cal.tangency.volatility if cal.tangency.volatility > _TOL else 0.0
+            cal_w = cal.tangency.weights * y
+            cal_cash = 1.0 - y
+
+        return PortfolioDiagnosis(
+            weights=w, cash_weight=cash_w, expected_return=r, volatility=v,
+            sharpe=s, risk_free=self.rf,
+            frontier_return=fr, return_gap=gap, efficient_weights=eff_w,
+            frontier_volatility=fv, volatility_gap=vgap,
+            cal_return=cal_r, cal_gap=cal_gap, sharpe_gap=sgap,
+            cal_weights=cal_w, cal_cash_weight=cal_cash)
 
     # ---- numeric (constrained, e.g. long-only) ---------------------------
     def optimize(self, objective: str = "max_sharpe", long_only: bool = True,
