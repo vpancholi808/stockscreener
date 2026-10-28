@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT))
 import numpy as np
 import pandas as pd
 
-from build_frontier_page import build
+from build_frontier_page import build, build_artifact
 from finmodel.quant.portfolio import MarkowitzOptimizer, NoTangencyPortfolio
 
 ok = lambda c: "OK" if c else "FAIL"
@@ -231,6 +231,44 @@ with sync_playwright() as p:
     check("Jacobi condition number matches numpy",
           abs(js["cond"] - want) / want < 1e-6,
           "%.6f vs %.6f" % (js["cond"], want))
+
+    print("\n8) THE ARTIFACT BUILD IS A FRAGMENT, NOT A DOCUMENT")
+    # The Artifact platform wraps the file in its own skeleton and sets the
+    # theme on the root element. A second <html>/<body>, or a theme toggle
+    # fighting the host's data-theme, both break it.
+    frag = build_artifact()
+    # "<head" alone also matches "<header>", which the fragment legitimately
+    # has; match the real tags.
+    for tag in ("<!doctype", "<html", "</html>", "<body", "</body>",
+                "<head>", "</head>"):
+        check("no %s in the artifact build" % tag, tag not in frag.lower())
+    check("artifact keeps a title", frag.lstrip().startswith("<title>"))
+    check("artifact declares the viewport-fit promise",
+          'claude:viewport-fit-sides' in frag)
+    check("artifact uses safe-area side gutters",
+          "max(16px,env(safe-area-inset-left" in frag.replace(" ", "")
+          or "max(16px, env(safe-area-inset-left" in frag)
+    check("artifact drops the theme toggle", 'id="theme"' not in frag)
+    check("site build keeps the theme toggle", 'id="theme"' in build())
+    check("both builds carry the same model code",
+          frag.count("function tangency(") == 1
+          and build().count("function tangency(") == 1)
+
+    art = Path(tempfile.mkdtemp(prefix="fm_art_")) / "a.html"
+    art.write_text("<!doctype html><html><head><meta charset='utf-8'>"
+                   "</head><body>" + frag + "</body></html>", encoding="utf-8")
+    page2 = browser.new_page(viewport={"width": 390, "height": 800})
+    errs2: list[str] = []
+    page2.on("pageerror", lambda e: errs2.append(str(e)))
+    page2.goto(art.as_uri())
+    page2.wait_for_function("() => window.__model !== undefined", timeout=15000)
+    check("artifact build renders without errors", not errs2,
+          "; ".join(errs2[:2]))
+    check("artifact build renders its metrics at phone width",
+          page2.locator("#stats .stat").count() == 4)
+    doc_w = page2.evaluate("() => document.documentElement.scrollWidth")
+    check("no horizontal page scroll at 390px", doc_w <= 391,
+          "scrollWidth %d" % doc_w)
 
     browser.close()
 

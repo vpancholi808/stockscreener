@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Build the standalone efficient-frontier page for the static site.
+"""Build the standalone efficient-frontier page.
 
     python build_frontier_page.py --out site/frontier.html
+    python build_frontier_page.py --artifact --out /tmp/frontier_artifact.html
 
 The screener page (build_site.py) is a rendering of filing data and needs a
 loaded database. This page needs nothing: the frontier is a map from expected
@@ -14,6 +15,14 @@ A/B/C/D geometry, the same tangency normalisation with the same guard for
 kappa <= 0, and the same efficient-branch-only frontier. test_frontier_page.py
 loads this page in a headless browser and asserts its numbers match the Python
 implementation, because two implementations of one formula drift otherwise.
+
+Two targets share that one copy of the model, for the same reason:
+
+  site      a complete HTML document for GitHub Pages, with its own theme
+            toggle and a link back to the screener.
+  artifact  a fragment for a hosted Artifact, which supplies the document
+            skeleton and sets the theme itself, so the toggle and the
+            back-link come out and safe-area gutters go in.
 """
 from __future__ import annotations
 
@@ -21,136 +30,149 @@ import argparse
 import sys
 from pathlib import Path
 
-PAGE = r"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__TITLE__</title>
-<meta name="description" content="Markowitz efficient frontier, the capital
-allocation line and the complete portfolio, computed live from assumptions you
-set.">
-<style>
+# --------------------------------------------------------------------------
+# Styles. The palette is a cool slate with a single teal accent for structure
+# and one blue reserved exclusively for the capital allocation line — the one
+# thing on the page the reader is meant to follow.
+# --------------------------------------------------------------------------
+STYLE = r"""
 :root{
-  --bg:#ffffff; --panel:#f6f8f9; --line:#dfe5e8; --ink:#15232b;
+  --bg:#ffffff; --panel:#f5f7f8; --line:#dde4e7; --ink:#15232b;
   --muted:#5d727e; --accent:#1f4e5f; --good:#2f7d5d; --bad:#a8402f;
-  --curve:#8a8a8a; --cal:#2a6fdb; --dash:#c2c8cc;
+  --curve:#7e8c93; --cal:#2a6fdb; --dash:#c2c8cc;
+  --display:__DISPLAY__; --body:__BODY__;
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
-    --bg:#10181c; --panel:#162027; --line:#26343c; --ink:#e6eef2;
-    --muted:#93a8b3; --accent:#7fc3d6; --good:#5fbf92; --bad:#e08b7a;
-    --curve:#9aa6ad; --cal:#6ea8f0; --dash:#3b4950;
+    --bg:#10181c; --panel:#16202600; --panel:#162026; --line:#26343c;
+    --ink:#e6eef2; --muted:#93a8b3; --accent:#7fc3d6; --good:#5fbf92;
+    --bad:#e08b7a; --curve:#9aa6ad; --cal:#6ea8f0; --dash:#3b4950;
+    color-scheme:dark;
   }
 }
 :root[data-theme="dark"]{
-  --bg:#10181c; --panel:#162027; --line:#26343c; --ink:#e6eef2;
+  --bg:#10181c; --panel:#162026; --line:#26343c; --ink:#e6eef2;
   --muted:#93a8b3; --accent:#7fc3d6; --good:#5fbf92; --bad:#e08b7a;
   --curve:#9aa6ad; --cal:#6ea8f0; --dash:#3b4950;
+  color-scheme:dark;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
-  font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,
-  "Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%}
-.wrap{max-width:1180px;margin:0 auto;padding:0 16px 64px}
-header{border-bottom:1px solid var(--line);padding:26px 0 18px}
-h1{margin:0 0 4px;font-size:26px;letter-spacing:-.02em}
-h2{font-size:17px;margin:30px 0 10px;letter-spacing:-.01em}
-.sub{color:var(--muted);margin:0 0 10px;max-width:72ch}
+  font:15px/1.55 var(--body);-webkit-text-size-adjust:100%}
+.wrap{max-width:1180px;margin:0 auto;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0 56px}
+header{border-bottom:1px solid var(--line);padding-block:26px 18px}
+h1{margin:0 0 6px;font:600 29px/1.15 var(--display);letter-spacing:-.015em;
+  text-wrap:balance}
+h2{font:600 18px/1.3 var(--display);margin:30px 0 10px;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:0 0 10px;max-width:68ch}
+.nav{margin:0 0 14px;display:flex;gap:10px;align-items:center}
 .nav a{color:var(--accent);text-decoration:none;font-size:14px}
 .nav a:hover{text-decoration:underline}
-.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);
+.grid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);
   gap:26px;align-items:start}
-@media (max-width:900px){.grid{grid-template-columns:1fr}}
+/* Grid items default to min-width:auto, so a wide table inside one pushes the
+   page sideways even though the table has its own overflow container. */
+.grid>*{min-width:0}
+@media (max-width:860px){.grid{grid-template-columns:1fr}}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
-  padding:14px}
-table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
-th,td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--line);
-  font-size:14px}
+  padding:14px;min-width:0}
+.tablebox{overflow-x:auto;min-width:0}
+table{border-collapse:collapse;width:100%;
+  font-variant-numeric:tabular-nums}
+th,td{padding:7px 9px;text-align:right;border-bottom:1px solid var(--line);
+  font-size:14px;white-space:nowrap}
 th:first-child,td:first-child{text-align:left}
 th{color:var(--muted);font-size:11px;text-transform:uppercase;
-  letter-spacing:.05em;font-weight:600}
+  letter-spacing:.07em;font-weight:600}
 tbody tr:last-child td{border-bottom:0}
 input,select,button{font:inherit;color:inherit;background:var(--bg);
   border:1px solid var(--line);border-radius:6px;padding:5px 7px}
-input[type=number]{width:84px;text-align:right;
+input[type=number]{width:80px;text-align:right;
   font-variant-numeric:tabular-nums}
-input[type=text]{width:100%;min-width:90px}
-input[type=range]{width:100%;padding:0;background:none;border:0;accent-color:var(--accent)}
+input[type=text]{width:100%;min-width:84px}
+input[type=range]{width:100%;padding:0;background:none;border:0;
+  accent-color:var(--accent)}
 button{cursor:pointer;background:var(--panel)}
 button:hover{border-color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0 0}
-.slider{margin:14px 0}
-.slider label{display:flex;justify-content:space-between;font-size:13px;
-  color:var(--muted);margin-bottom:3px}
+.slider{margin:16px 0}
+.slider label{display:flex;justify-content:space-between;gap:10px;
+  font-size:13px;color:var(--muted);margin-bottom:4px}
 .slider label b{color:var(--ink);font-variant-numeric:tabular-nums}
-.stats{display:flex;flex-wrap:wrap;gap:24px;margin:18px 0 6px}
-.stat b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.stats{display:flex;flex-wrap:wrap;gap:12px 26px;margin:16px 0 6px}
+.stat{min-width:0}
+.stat b{display:block;font:600 23px/1.2 var(--display);
+  font-variant-numeric:tabular-nums}
 .stat span{color:var(--muted);font-size:11px;text-transform:uppercase;
-  letter-spacing:.06em}
+  letter-spacing:.07em}
 .stat i{font-style:normal;color:var(--muted);font-size:12px}
 .warn{border:1px solid var(--line);border-left:3px solid var(--bad);
   background:var(--panel);border-radius:8px;padding:12px 14px;margin:16px 0;
   font-size:14px}
 .warn b{display:block;margin-bottom:4px}
-.note{color:var(--muted);font-size:13px;max-width:78ch;margin:10px 0 0}
-svg{width:100%;height:auto;display:block}
-details{margin-top:22px;border-top:1px solid var(--line);padding-top:12px}
+.note{color:var(--muted);font-size:13.5px;max-width:76ch;margin:10px 0 0}
+.chartbox{overflow-x:auto;margin-top:18px}
+.chartbox svg{display:block;width:100%;min-width:660px;height:auto}
+details{margin-top:24px;border-top:1px solid var(--line);padding-top:12px}
 summary{cursor:pointer;color:var(--accent);font-size:14px}
-details .note{margin-top:10px}
 code{background:var(--panel);border:1px solid var(--line);border-radius:4px;
-  padding:1px 4px;font-size:13px}
+  padding:1px 5px;font-size:12.5px}
 footer{margin-top:40px;border-top:1px solid var(--line);padding-top:14px;
   color:var(--muted);font-size:12.5px;max-width:80ch}
 .pos{color:var(--good)} .neg{color:var(--bad)}
-.del{padding:3px 7px;line-height:1}
-</style>
-</head>
-<body>
+.del{padding:3px 8px;line-height:1}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;
+  transition:none!important}}
+"""
+
+BODY = r"""
 <div class="wrap">
 
 <header>
-  <h1>__TITLE__</h1>
+  <h1>__HEADING__</h1>
   <p class="sub">Mean-variance optimisation over assumptions you set. Every
-  number below follows from the table — change one and the frontier moves.
-  Nothing is fetched and nothing is stored; the arithmetic runs in your
+  number below follows from the table &mdash; change one and the frontier
+  moves. Nothing is fetched and nothing is stored; the arithmetic runs in your
   browser.</p>
-  <p class="nav"><a href="./index.html">&larr; Equity health screener</a>
-    &nbsp;·&nbsp; <button id="theme" style="padding:3px 8px">◐ Theme</button></p>
+  __NAV__
 </header>
 
 <div class="grid">
   <div>
     <h2>Assets</h2>
     <div class="card">
-      <table id="assets"><thead><tr>
-        <th>Asset</th><th>Expected return</th><th>Volatility</th><th></th>
-      </tr></thead><tbody></tbody></table>
+      <div class="tablebox">
+        <table id="assets"><thead><tr>
+          <th>Asset</th><th>Expected return</th><th>Volatility</th><th></th>
+        </tr></thead><tbody></tbody></table>
+      </div>
       <div class="row">
         <button id="add">Add asset</button>
         <button id="reset">Reset</button>
-        <span class="note" style="margin:0">Returns and volatilities are
-        annual percentages.</span>
+        <span class="note" style="margin:0">Annual percentages.</span>
       </div>
     </div>
 
     <div class="slider">
-      <label>Correlation between every pair <b id="rhov">0.35</b></label>
+      <label for="rho">Correlation between every pair <b id="rhov">0.35</b></label>
       <input type="range" id="rho" min="-0.30" max="0.95" step="0.05" value="0.35">
       <p class="note">One number for every pair keeps the table small.
       Correlation is what diversification is made of: at 1.0 the frontier is a
-      straight line and there is nothing to gain. Below &minus;1/(n&minus;1)
-      no set of assets could produce the matrix, so the slider stops
-      there.</p>
+      straight line and there is nothing to gain. Below &minus;1/(n&minus;1) no
+      set of assets could produce the matrix, so the slider stops there.</p>
     </div>
 
     <div class="slider">
-      <label>Risk-free rate <b id="rfv">2.00%</b></label>
+      <label for="rf">Risk-free rate <b id="rfv">2.00%</b></label>
       <input type="range" id="rf" min="0" max="10" step="0.1" value="2">
     </div>
 
     <div class="slider">
-      <label>Risk aversion (A) <b id="av">3.0</b></label>
+      <label for="aversion">Risk aversion (A) <b id="av">3.0</b></label>
       <input type="range" id="aversion" min="1" max="10" step="0.5" value="3">
       <p class="note">The A in U = E[r] &minus; (A/2)&sigma;&sup2;. Two to four
       is the conventional range. It sets how much of the tangency portfolio you
@@ -166,15 +188,16 @@ footer{margin-top:40px;border-top:1px solid var(--line);padding-top:14px;
   </div>
 </div>
 
-<div id="chart" class="card" style="padding:10px;margin-top:18px"></div>
+<div class="card chartbox" id="chart"></div>
 
 <h2>Weights</h2>
-<div class="card"><table id="weights"></table></div>
+<div class="card"><div class="tablebox"><table id="weights"></table></div></div>
 <p class="note" id="shortnote"></p>
 
 <div id="completewrap">
   <h2>Your complete portfolio</h2>
-  <div class="card"><table id="complete"></table></div>
+  <div class="card"><div class="tablebox">
+    <table id="complete"></table></div></div>
   <p class="note">The Sharpe column is constant: moving along the capital
   allocation line changes how much risk you carry, never how well you are paid
   for carrying it. That is Tobin's two-fund separation &mdash; the risky mix is
@@ -189,8 +212,9 @@ footer{margin-top:40px;border-top:1px solid var(--line);padding-top:14px;
 
 <footer id="foot"></footer>
 </div>
+"""
 
-<script>
+SCRIPT = r"""
 "use strict";
 // ---------------------------------------------------------------- linear algebra
 function inv(M){                      // Gauss-Jordan with partial pivoting
@@ -300,13 +324,13 @@ const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",
 function drawAssets(){
   const tb=$("#assets tbody");
   tb.innerHTML=rows.map((r,i)=>
-    '<tr><td><input type="text" data-i="'+i+'" data-k="name" value="'+
-      esc(r.name)+'"></td>'+
-    '<td><input type="number" step="0.5" data-i="'+i+'" data-k="mu" value="'+
-      r.mu+'"></td>'+
-    '<td><input type="number" step="0.5" min="0.01" data-i="'+i+
-      '" data-k="sd" value="'+r.sd+'"></td>'+
-    '<td><button class="del" data-del="'+i+'" title="Remove" '+
+    '<tr><td><input type="text" id="n'+i+'" data-i="'+i+'" data-k="name" '+
+      'aria-label="Asset name" value="'+esc(r.name)+'"></td>'+
+    '<td><input type="number" id="m'+i+'" step="0.5" data-i="'+i+'" '+
+      'data-k="mu" aria-label="Expected return %" value="'+r.mu+'"></td>'+
+    '<td><input type="number" id="s'+i+'" step="0.5" min="0.01" data-i="'+i+
+      '" data-k="sd" aria-label="Volatility %" value="'+r.sd+'"></td>'+
+    '<td><button class="del" data-del="'+i+'" aria-label="Remove asset" '+
       (rows.length<=2?"disabled":"")+'>&times;</button></td></tr>').join("");
 }
 
@@ -343,7 +367,7 @@ function render(){
       'expected return and the frontier collapses to a point. Vary the '+
       'returns.</div>';
     $("#chart").innerHTML="";$("#weights").innerHTML="";
-    $("#completewrap").style.display="none";$("#geom").innerHTML="";
+    $("#completewrap").hidden=true;$("#geom").innerHTML="";
     return;
   }
 
@@ -477,8 +501,8 @@ function drawWeights(g,gmv,tan,mu,S,rf){
 
 function drawComplete(tan,rf,A){
   const wrap=$("#completewrap");
-  if(!tan){wrap.style.display="none";return;}
-  wrap.style.display="";
+  if(!tan){wrap.hidden=true;return;}
+  wrap.hidden=false;
   const ladder=[1.5,2,3,5,8];
   if(ladder.indexOf(A)<0) ladder.push(A);
   ladder.sort((a,b)=>a-b);
@@ -501,8 +525,8 @@ function drawGeom(g,rf,S){
   $("#geom").innerHTML=
     '<p class="note">The whole frontier reduces to four numbers computed from '+
     'the expected returns &mu; and the covariance &Sigma;:</p>'+
-    '<div class="card" style="margin-top:8px"><table><thead><tr><th></th>'+
-    '<th></th><th>Value</th></tr></thead><tbody>'+
+    '<div class="card tablebox" style="margin-top:8px"><table><thead><tr>'+
+    '<th></th><th></th><th>Value</th></tr></thead><tbody>'+
     grow("A","1&prime;&Sigma;&#8315;&sup1;1",g.a)+
     grow("B","1&prime;&Sigma;&#8315;&sup1;&mu;",g.b)+
     grow("C","&mu;&prime;&Sigma;&#8315;&sup1;&mu;",g.c)+
@@ -584,14 +608,17 @@ $("#reset").addEventListener("click",()=>{
 ["rho","rf","aversion"].forEach(id=>
   $("#"+id).addEventListener("input",render));
 
-// Theme preference is a per-viewer convenience. It can throw in a private
-// window or with site data blocked, so every access is guarded and the page
-// renders correctly without it.
+// The site build carries its own theme toggle; the Artifact build does not,
+// because there the host sets data-theme and a second control would fight it.
 (function(){
+  const btn=$("#theme");
+  if(!btn) return;
+  // A per-viewer convenience. It can throw in a private window or with site
+  // data blocked, so every access is guarded and the page renders without it.
   let saved=null;
   try{saved=localStorage.getItem("fm-theme");}catch(e){}
   if(saved) document.documentElement.setAttribute("data-theme",saved);
-  $("#theme").addEventListener("click",()=>{
+  btn.addEventListener("click",()=>{
     const cur=document.documentElement.getAttribute("data-theme");
     const next = cur==="dark" ? "light"
       : cur==="light" ? "dark"
@@ -611,9 +638,6 @@ render();
 // finmodel/quant/portfolio.py. Two implementations of one formula drift.
 window.__model={inv,geometry,volAt,maxSharpe,gmvPortfolio,targetReturn,
                 tangency,frontier,stats,conditionNumber};
-</script>
-</body>
-</html>
 """
 
 FOOTER = (
@@ -628,21 +652,75 @@ FOOTER = (
     "security."
 )
 
+SITE_NAV = ('<p class="nav"><a href="./index.html">&larr; Equity health '
+            'screener</a><button id="theme" style="padding:3px 9px">'
+            '&#9680; Theme</button></p>')
 
-def build(title: str) -> str:
-    return PAGE.replace("__TITLE__", title).replace("__FOOTER__", FOOTER)
+SYSTEM_STACK = ('ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,'
+                '"Helvetica Neue",Arial,sans-serif')
+FONT_LINK = ('<link rel="stylesheet" href="https://fonts.googleapis.com/'
+             'css2?family=Spectral:wght@500;600&family=IBM+Plex+Sans:wght@'
+             '400;600&display=swap">')
+
+
+def _style(display: str, body: str) -> str:
+    return STYLE.replace("__DISPLAY__", display).replace("__BODY__", body)
+
+
+def build(title: str = "Efficient frontier and the CAL") -> str:
+    """A complete HTML document for the static site."""
+    body = (BODY.replace("__HEADING__", title).replace("__NAV__", SITE_NAV))
+    return (
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n"
+        "<meta charset=\"utf-8\">\n"
+        "<meta name=\"viewport\" content=\"width=device-width, "
+        "initial-scale=1\">\n"
+        "<title>" + title + "</title>\n"
+        "<meta name=\"description\" content=\"Markowitz efficient frontier, "
+        "the capital allocation line and the complete portfolio, computed "
+        "live from assumptions you set.\">\n"
+        "<style>" + _style(SYSTEM_STACK, SYSTEM_STACK) + "</style>\n"
+        "</head>\n<body>\n" + body +
+        "\n<script>\n" + SCRIPT.replace("__FOOTER__", FOOTER) +
+        "\n</script>\n</body>\n</html>\n"
+    )
+
+
+def build_artifact(title: str = "Efficient Frontier & CAL") -> str:
+    """A fragment for a hosted Artifact.
+
+    The Artifact wraps the file in its own document skeleton and sets the
+    theme itself, so this emits no skeleton, drops the theme toggle and the
+    back-link, and takes the safe-area gutters the platform expects.
+    """
+    body = BODY.replace("__HEADING__", "Efficient frontier and the CAL") \
+               .replace("__NAV__", "")
+    display = '"Spectral",Georgia,"Times New Roman",serif'
+    text = '"IBM Plex Sans",' + SYSTEM_STACK
+    return (
+        "<title>" + title + "</title>\n"
+        '<meta name="claude:viewport-fit-sides" content="cover">\n'
+        + FONT_LINK + "\n"
+        "<style>" + _style(display, text) + "</style>\n" + body +
+        "\n<script>\n" + SCRIPT.replace("__FOOTER__", FOOTER) +
+        "\n</script>\n"
+    )
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default="site/frontier.html")
     ap.add_argument("--title", default="Efficient frontier and the CAL")
+    ap.add_argument("--artifact", action="store_true",
+                    help="emit the Artifact fragment instead of a document")
     args = ap.parse_args()
 
+    html = build_artifact() if args.artifact else build(args.title)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(build(args.title), encoding="utf-8")
-    print("wrote %s (%.0f KB)" % (out, out.stat().st_size / 1e3))
+    out.write_text(html, encoding="utf-8")
+    print("wrote %s (%.0f KB)%s" % (out, out.stat().st_size / 1e3,
+                                    " [artifact]" if args.artifact else ""))
     return 0
 
 
