@@ -145,7 +145,10 @@ body{margin:0;background:var(--bg);color:var(--ink);
 .wrap{max-width:1500px;margin:0 auto;padding:0 16px}
 header{border-bottom:1px solid var(--line);padding:26px 0 18px}
 h1{margin:0 0 4px;font-size:26px;letter-spacing:-.02em}
-.sub{color:var(--muted);margin:0 0 16px;max-width:70ch}
+.sub{color:var(--muted);margin:0 0 10px;max-width:70ch}
+.nav{margin:0 0 16px}
+.nav a{color:var(--accent);text-decoration:none;font-size:14px}
+.nav a:hover{text-decoration:underline}
 .stats{display:flex;flex-wrap:wrap;gap:26px}
 .stat b{display:block;font-size:24px;font-variant-numeric:tabular-nums}
 .stat span{color:var(--muted);font-size:12px;text-transform:uppercase;
@@ -219,6 +222,8 @@ summary{cursor:pointer;color:var(--accent)}
   <p class="sub">Financial health, forensic accounting checks and
   peer-relative ranking, computed from SEC filings. No estimates, no price
   targets, no buy or sell verdicts.</p>
+  <p class="nav"><a href="./frontier.html">Efficient frontier &amp; capital
+  allocation line &rarr;</a></p>
   <div class="stats" id="stats"></div>
 </header>
 

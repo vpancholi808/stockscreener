@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Efficient frontier and the CAL</title>
+<meta name="description" content="Markowitz efficient frontier, the capital
+allocation line and the complete portfolio, computed live from assumptions you
+set.">
+<style>
+:root{
+  --bg:#ffffff; --panel:#f6f8f9; --line:#dfe5e8; --ink:#15232b;
+  --muted:#5d727e; --accent:#1f4e5f; --good:#2f7d5d; --bad:#a8402f;
+  --curve:#8a8a8a; --cal:#2a6fdb; --dash:#c2c8cc;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#10181c; --panel:#162027; --line:#26343c; --ink:#e6eef2;
+    --muted:#93a8b3; --accent:#7fc3d6; --good:#5fbf92; --bad:#e08b7a;
+    --curve:#9aa6ad; --cal:#6ea8f0; --dash:#3b4950;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10181c; --panel:#162027; --line:#26343c; --ink:#e6eef2;
+  --muted:#93a8b3; --accent:#7fc3d6; --good:#5fbf92; --bad:#e08b7a;
+  --curve:#9aa6ad; --cal:#6ea8f0; --dash:#3b4950;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,
+  "Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%}
+.wrap{max-width:1180px;margin:0 auto;padding:0 16px 64px}
+header{border-bottom:1px solid var(--line);padding:26px 0 18px}
+h1{margin:0 0 4px;font-size:26px;letter-spacing:-.02em}
+h2{font-size:17px;margin:30px 0 10px;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:0 0 10px;max-width:72ch}
+.nav a{color:var(--accent);text-decoration:none;font-size:14px}
+.nav a:hover{text-decoration:underline}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);
+  gap:26px;align-items:start}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:14px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--line);
+  font-size:14px}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-size:11px;text-transform:uppercase;
+  letter-spacing:.05em;font-weight:600}
+tbody tr:last-child td{border-bottom:0}
+input,select,button{font:inherit;color:inherit;background:var(--bg);
+  border:1px solid var(--line);border-radius:6px;padding:5px 7px}
+input[type=number]{width:84px;text-align:right;
+  font-variant-numeric:tabular-nums}
+input[type=text]{width:100%;min-width:90px}
+input[type=range]{width:100%;padding:0;background:none;border:0;accent-color:var(--accent)}
+button{cursor:pointer;background:var(--panel)}
+button:hover{border-color:var(--accent)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0 0}
+.slider{margin:14px 0}
+.slider label{display:flex;justify-content:space-between;font-size:13px;
+  color:var(--muted);margin-bottom:3px}
+.slider label b{color:var(--ink);font-variant-numeric:tabular-nums}
+.stats{display:flex;flex-wrap:wrap;gap:24px;margin:18px 0 6px}
+.stat b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.stat span{color:var(--muted);font-size:11px;text-transform:uppercase;
+  letter-spacing:.06em}
+.stat i{font-style:normal;color:var(--muted);font-size:12px}
+.warn{border:1px solid var(--line);border-left:3px solid var(--bad);
+  background:var(--panel);border-radius:8px;padding:12px 14px;margin:16px 0;
+  font-size:14px}
+.warn b{display:block;margin-bottom:4px}
+.note{color:var(--muted);font-size:13px;max-width:78ch;margin:10px 0 0}
+svg{width:100%;height:auto;display:block}
+details{margin-top:22px;border-top:1px solid var(--line);padding-top:12px}
+summary{cursor:pointer;color:var(--accent);font-size:14px}
+details .note{margin-top:10px}
+code{background:var(--panel);border:1px solid var(--line);border-radius:4px;
+  padding:1px 4px;font-size:13px}
+footer{margin-top:40px;border-top:1px solid var(--line);padding-top:14px;
+  color:var(--muted);font-size:12.5px;max-width:80ch}
+.pos{color:var(--good)} .neg{color:var(--bad)}
+.del{padding:3px 7px;line-height:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Efficient frontier and the CAL</h1>
+  <p class="sub">Mean-variance optimisation over assumptions you set. Every
+  number below follows from the table — change one and the frontier moves.
+  Nothing is fetched and nothing is stored; the arithmetic runs in your
+  browser.</p>
+  <p class="nav"><a href="./index.html">&larr; Equity health screener</a>
+    &nbsp;·&nbsp; <button id="theme" style="padding:3px 8px">◐ Theme</button></p>
+</header>
+
+<div class="grid">
+  <div>
+    <h2>Assets</h2>
+    <div class="card">
+      <table id="assets"><thead><tr>
+        <th>Asset</th><th>Expected return</th><th>Volatility</th><th></th>
+      </tr></thead><tbody></tbody></table>
+      <div class="row">
+        <button id="add">Add asset</button>
+        <button id="reset">Reset</button>
+        <span class="note" style="margin:0">Returns and volatilities are
+        annual percentages.</span>
+      </div>
+    </div>
+
+    <div class="slider">
+      <label>Correlation between every pair <b id="rhov">0.35</b></label>
+      <input type="range" id="rho" min="-0.30" max="0.95" step="0.05" value="0.35">
+      <p class="note">One number for every pair keeps the table small.
+      Correlation is what diversification is made of: at 1.0 the frontier is a
+      straight line and there is nothing to gain. Below &minus;1/(n&minus;1)
+      no set of assets could produce the matrix, so the slider stops
+      there.</p>
+    </div>
+
+    <div class="slider">
+      <label>Risk-free rate <b id="rfv">2.00%</b></label>
+      <input type="range" id="rf" min="0" max="10" step="0.1" value="2">
+    </div>
+
+    <div class="slider">
+      <label>Risk aversion (A) <b id="av">3.0</b></label>
+      <input type="range" id="aversion" min="1" max="10" step="0.5" value="3">
+      <p class="note">The A in U = E[r] &minus; (A/2)&sigma;&sup2;. Two to four
+      is the conventional range. It sets how much of the tangency portfolio you
+      hold, and nothing else.</p>
+    </div>
+  </div>
+
+  <div>
+    <h2>Result</h2>
+    <div class="stats" id="stats"></div>
+    <div id="alert"></div>
+    <p class="note" id="chartnote"></p>
+  </div>
+</div>
+
+<div id="chart" class="card" style="padding:10px;margin-top:18px"></div>
+
+<h2>Weights</h2>
+<div class="card"><table id="weights"></table></div>
+<p class="note" id="shortnote"></p>
+
+<div id="completewrap">
+  <h2>Your complete portfolio</h2>
+  <div class="card"><table id="complete"></table></div>
+  <p class="note">The Sharpe column is constant: moving along the capital
+  allocation line changes how much risk you carry, never how well you are paid
+  for carrying it. That is Tobin's two-fund separation &mdash; the risky mix is
+  the same for a cautious investor and an aggressive one, and only the cash
+  weight differs.</p>
+</div>
+
+<details>
+  <summary>The geometry behind it</summary>
+  <div id="geom"></div>
+</details>
+
+<footer id="foot"></footer>
+</div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- linear algebra
+function inv(M){                      // Gauss-Jordan with partial pivoting
+  const n = M.length;
+  const A = M.map((r,i)=>r.concat(Array.from({length:n},(_,j)=>i===j?1:0)));
+  for(let c=0;c<n;c++){
+    let p=c;
+    for(let r=c+1;r<n;r++) if(Math.abs(A[r][c])>Math.abs(A[p][c])) p=r;
+    if(Math.abs(A[p][c])<1e-14) return null;        // singular
+    [A[c],A[p]]=[A[p],A[c]];
+    const d=A[c][c];
+    for(let j=0;j<2*n;j++) A[c][j]/=d;
+    for(let r=0;r<n;r++){
+      if(r===c) continue;
+      const f=A[r][c];
+      if(f===0) continue;
+      for(let j=0;j<2*n;j++) A[r][j]-=f*A[c][j];
+    }
+  }
+  return A.map(r=>r.slice(n));
+}
+const mv=(M,v)=>M.map(r=>r.reduce((s,x,j)=>s+x*v[j],0));
+const dot=(a,b)=>a.reduce((s,x,i)=>s+x*b[i],0);
+const quad=(v,M)=>dot(v,mv(M,v));
+
+// ---------------------------------------------------------------- the model
+// A direct port of finmodel/quant/portfolio.py. Same four scalars, same
+// tangency normalisation, same guard, same efficient-branch-only frontier.
+const TOL=1e-10;
+
+function geometry(mu,S){
+  const Si=inv(S);
+  if(!Si) return null;
+  const ones=mu.map(()=>1);
+  const a=dot(ones,mv(Si,ones)), b=dot(ones,mv(Si,mu)), c=dot(mu,mv(Si,mu));
+  const d=a*c-b*b;
+  if(a<=TOL||d<=TOL*Math.max(a*c,1)) return null;
+  return {Si,a,b,c,d,
+          gmvReturn:b/a, gmvVol:Math.sqrt(1/a),
+          asymptote:Math.sqrt(d/a)};
+}
+const volAt=(g,r)=>Math.sqrt(Math.max((g.a*r*r-2*g.b*r+g.c)/g.d,0));
+const maxSharpe=(g,rf)=>Math.sqrt(Math.max(g.c-2*rf*g.b+rf*rf*g.a,0));
+
+function stats(w,mu,S,rf){
+  const r=dot(w,mu), v=Math.sqrt(Math.max(quad(w,S),0));
+  return {w,r,v,sharpe:v>TOL?(r-rf)/v:NaN};
+}
+function gmvPortfolio(g,mu,S,rf){
+  const ones=mu.map(()=>1);
+  const raw=mv(g.Si,ones);
+  return stats(raw.map(x=>x/g.a),mu,S,rf);
+}
+function targetReturn(g,mu,S,rf,t){
+  const ones=mu.map(()=>1);
+  const lam=(g.c-g.b*t)/g.d, gam=(g.a*t-g.b)/g.d;
+  const u=mv(g.Si,ones), m=mv(g.Si,mu);
+  return stats(u.map((x,i)=>lam*x+gam*m[i]),mu,S,rf);
+}
+// kappa = 1'S^-1(mu - rf 1) = B - rf A is positive exactly when rf is below
+// the GMV return. Dividing by a negative kappa flips every weight onto the
+// inefficient branch and returns the MINIMUM-Sharpe portfolio as the maximum,
+// so this returns null and the page explains it instead.
+function tangency(g,mu,S,rf){
+  const kappa=g.b-rf*g.a;
+  if(kappa<=TOL*Math.max(Math.abs(g.b),1)) return null;
+  const ex=mu.map(m=>m-rf);
+  const raw=mv(g.Si,ex);
+  return stats(raw.map(x=>x/kappa),mu,S,rf);
+}
+function frontier(g,mu,S,rf,points,includeLower){
+  const hi=Math.max(...mu);
+  let lo=g.gmvReturn;
+  const gmvR=lo;
+  let top=hi;
+  if(top<=lo+TOL) top=lo+Math.max(Math.abs(lo),0.01)*0.5;
+  if(includeLower) lo=Math.min(Math.min(...mu),2*gmvR-top);
+  const out=[];
+  for(let i=0;i<points;i++){
+    const t=lo+(top-lo)*i/(points-1);
+    const p=targetReturn(g,mu,S,rf,t);
+    out.push({r:p.r,v:p.v,sharpe:p.sharpe,efficient:p.r>=gmvR-TOL});
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- state
+const DEFAULT=[
+  {name:"Short bonds",   mu:4,  sd:10},
+  {name:"Broad equity",  mu:8,  sd:18},
+  {name:"Growth equity", mu:12, sd:30},
+  {name:"Real assets",   mu:10, sd:22},
+];
+let rows=DEFAULT.map(r=>Object.assign({},r));
+
+const $=s=>document.querySelector(s);
+// Guard the axis case where a tick sits a hair below zero and rounds to the
+// string "-0%", which reads as a defect.
+const pct=(x,d)=>{
+  const k=d===undefined?2:d;
+  const v=Math.abs(x)<0.5*Math.pow(10,-(k+2))?0:x;
+  return (v*100).toFixed(k)+"%";
+};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",
+  ">":"&gt;",'"':"&quot;"}[c]));
+
+function drawAssets(){
+  const tb=$("#assets tbody");
+  tb.innerHTML=rows.map((r,i)=>
+    '<tr><td><input type="text" data-i="'+i+'" data-k="name" value="'+
+      esc(r.name)+'"></td>'+
+    '<td><input type="number" step="0.5" data-i="'+i+'" data-k="mu" value="'+
+      r.mu+'"></td>'+
+    '<td><input type="number" step="0.5" min="0.01" data-i="'+i+
+      '" data-k="sd" value="'+r.sd+'"></td>'+
+    '<td><button class="del" data-del="'+i+'" title="Remove" '+
+      (rows.length<=2?"disabled":"")+'>&times;</button></td></tr>').join("");
+}
+
+function render(){
+  const n=rows.length;
+  // A uniform correlation matrix is positive semi-definite only for
+  // rho >= -1/(n-1). Clamp the control rather than let the page compute
+  // weights for a covariance no set of assets could produce.
+  const floor=n>1?-1/(n-1):0;
+  const rhoEl=$("#rho");
+  // Round the floor UP to a multiple of the step, so the slider's value grid
+  // stays on clean 0.05 marks; otherwise a min of -0.32 shifts every stop and
+  // a nominal 0.35 lands on 0.33. Nudge once more when the rounded floor is
+  // exactly -1/(n-1), where the matrix is singular rather than merely valid.
+  const STEP=0.05;
+  let lo=Math.ceil(floor/STEP)*STEP;
+  if(lo<=floor+1e-12) lo+=STEP;
+  rhoEl.min=lo.toFixed(2);
+  if(+rhoEl.value<lo) rhoEl.value=lo.toFixed(2);
+  const rho=+rhoEl.value, rf=+$("#rf").value/100, A=+$("#aversion").value;
+  $("#rhov").textContent=rho.toFixed(2);
+  $("#rfv").textContent=pct(rf);
+  $("#av").textContent=A.toFixed(1);
+
+  const mu=rows.map(r=>r.mu/100), sd=rows.map(r=>r.sd/100);
+  const S=sd.map((a,i)=>sd.map((b,j)=>a*b*(i===j?1:rho)));
+  const g=geometry(mu,S);
+
+  if(!g){
+    $("#stats").innerHTML="";
+    $("#alert").innerHTML='<div class="warn"><b>No frontier to trace.</b>'+
+      'Either the covariance is singular, or every asset has the same '+
+      'expected return &mdash; in which case every portfolio has the same '+
+      'expected return and the frontier collapses to a point. Vary the '+
+      'returns.</div>';
+    $("#chart").innerHTML="";$("#weights").innerHTML="";
+    $("#completewrap").style.display="none";$("#geom").innerHTML="";
+    return;
+  }
+
+  const gmv=gmvPortfolio(g,mu,S,rf);
+  const tan=tangency(g,mu,S,rf);
+  const curve=frontier(g,mu,S,rf,120,true);
+
+  $("#stats").innerHTML=
+    stat("Min-variance return",pct(g.gmvReturn),"B/A")+
+    stat("Min-variance volatility",pct(g.gmvVol),"&radic;(1/A)")+
+    stat("Tangency return",tan?pct(tan.r):"&mdash;",
+         tan?pct(tan.v)+" vol":"none exists")+
+    stat("Best Sharpe ratio",tan?tan.sharpe.toFixed(3):"&mdash;",
+         tan?("+"+(tan.sharpe-gmv.sharpe).toFixed(3)+" vs min-variance")
+            :("supremum "+g.asymptote.toFixed(3)));
+
+  $("#alert").innerHTML = tan ? "" :
+    '<div class="warn"><b>No tangency portfolio exists at a '+pct(rf)+
+    ' risk-free rate.</b>The minimum-variance portfolio returns '+
+    pct(g.gmvReturn)+', which is at or below the risk-free rate, so no line '+
+    'from '+pct(rf)+' ever touches the efficient branch. The Sharpe ratio '+
+    'rises along the frontier toward '+g.asymptote.toFixed(3)+' &mdash; the '+
+    'slope of the hyperbola&rsquo;s asymptote &mdash; without ever reaching '+
+    'it, so the maximum is a limit rather than a portfolio. This is not a '+
+    'numerical failure: it is the honest answer when the assumed returns do '+
+    'not compensate for the assumed risk, and lending at '+pct(rf)+
+    ' dominates. Lower the risk-free rate or raise an expected return to see '+
+    'the line.</div>';
+
+  drawChart(g,gmv,tan,curve,mu,sd,rf);
+  drawWeights(g,gmv,tan,mu,S,rf);
+  drawComplete(tan,rf,A);
+  drawGeom(g,rf,S);
+}
+const stat=(label,value,sub)=>
+  '<div class="stat"><span>'+label+'</span><b>'+value+'</b><i>'+
+  (sub||"")+'</i></div>';
+
+function drawChart(g,gmv,tan,curve,mu,sd,rf){
+  const W=1120,H=460,L=64,R=W-24,T=20,B=H-48;
+  const vmax=Math.max(...curve.map(p=>p.v),...sd,tan?tan.v:0)*1.12;
+  const rs=curve.map(p=>p.r).concat(mu);
+  if(tan) rs.push(tan.r);
+  let rmin=Math.min(...rs,rf),rmax=Math.max(...rs,rf);
+  const pad=(rmax-rmin)*0.12||0.02; rmin-=pad; rmax+=pad;
+  const x=v=>L+(v/vmax)*(R-L), y=r=>B-((r-rmin)/(rmax-rmin))*(B-T);
+  const ticks=(lo,hi,n)=>{const s=(hi-lo)/n;return Array.from({length:n+1},
+    (_,i)=>lo+s*i);};
+  const path=pts=>pts.map(p=>x(p.v).toFixed(1)+","+y(p.r).toFixed(1)).join(" ");
+  const eff=curve.filter(p=>p.efficient), low=curve.filter(p=>!p.efficient);
+
+  let s='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Efficient '+
+    'frontier and capital allocation line" font-size="12.5">';
+  ticks(rmin,rmax,4).forEach(t=>{
+    s+='<line x1="'+L+'" x2="'+R+'" y1="'+y(t).toFixed(1)+'" y2="'+
+       y(t).toFixed(1)+'" stroke="var(--line)"/>'+
+       '<text x="'+(L-8)+'" y="'+(y(t)+4).toFixed(1)+
+       '" text-anchor="end" fill="var(--muted)">'+pct(t,0)+'</text>';
+  });
+  ticks(0,vmax,4).forEach(t=>{
+    s+='<text x="'+x(t).toFixed(1)+'" y="'+(B+18)+
+       '" text-anchor="middle" fill="var(--muted)">'+pct(t,0)+'</text>';
+  });
+  s+='<line x1="'+L+'" x2="'+R+'" y1="'+B+'" y2="'+B+'" stroke="var(--line)"/>';
+  s+='<text x="'+((L+R)/2)+'" y="'+(B+38)+'" text-anchor="middle" '+
+     'fill="var(--muted)">Volatility (annual &sigma;)</text>';
+  s+='<text x="'+L+'" y="'+(T-2)+'" fill="var(--muted)">Expected return</text>';
+  if(low.length) s+='<polyline points="'+path(low)+'" fill="none" '+
+    'stroke="var(--dash)" stroke-width="2" stroke-dasharray="5 4"/>';
+  s+='<polyline points="'+path(eff)+'" fill="none" stroke="var(--curve)" '+
+     'stroke-width="2.5"/>';
+  if(tan){
+    const vEnd=vmax, rEnd=rf+tan.sharpe*vEnd;
+    s+='<line x1="'+x(0)+'" y1="'+y(rf).toFixed(1)+'" x2="'+x(vEnd).toFixed(1)+
+       '" y2="'+y(rEnd).toFixed(1)+'" stroke="var(--cal)" stroke-width="2.5"/>';
+    s+=mark(x(tan.v),y(tan.r),6,"var(--cal)","Tangency "+pct(tan.r)+" / "+
+            pct(tan.v));
+    s+='<text x="'+(x(tan.v)-12).toFixed(1)+'" y="'+(y(tan.r)-14).toFixed(1)+
+       '" text-anchor="end" fill="var(--cal)">Tangency</text>';
+    s+=mark(x(0),y(rf),4,"var(--muted)","Risk-free "+pct(rf));
+    s+='<text x="'+(x(0)+9).toFixed(1)+'" y="'+(y(rf)+18).toFixed(1)+
+       '" fill="var(--muted)">Risk-free '+pct(rf)+'</text>';
+  }
+  s+=mark(x(gmv.v),y(gmv.r),5,"var(--curve)","Minimum variance "+pct(gmv.r)+
+          " / "+pct(gmv.v));
+  s+='<text x="'+(x(gmv.v)-10).toFixed(1)+'" y="'+(y(gmv.r)+20).toFixed(1)+
+     '" text-anchor="end" fill="var(--ink)">Minimum variance</text>';
+  rows.forEach((row,i)=>{
+    s+=mark(x(sd[i]),y(mu[i]),3.5,"var(--dash)",esc(row.name)+" "+
+            pct(mu[i])+" / "+pct(sd[i]));
+    s+='<text x="'+(x(sd[i])+8).toFixed(1)+'" y="'+(y(mu[i])+4).toFixed(1)+
+       '" fill="var(--muted)">'+esc(row.name)+'</text>';
+  });
+  s+='</svg>';
+  $("#chart").innerHTML=s;
+  $("#chartnote").innerHTML="Solid is the efficient branch; dashed is the "+
+    "lower branch of the same hyperbola, where every portfolio is beaten by "+
+    "one directly above it at identical risk."+(tan?" The straight line is "+
+    "the capital allocation line: it lies above the frontier everywhere "+
+    "except the single point of contact, which is the whole argument for "+
+    "holding cash or leverage alongside one risky mix rather than picking a "+
+    "frontier portfolio directly.":"");
+}
+const mark=(cx,cy,r,fill,title)=>
+  '<circle cx="'+cx.toFixed(1)+'" cy="'+cy.toFixed(1)+'" r="'+r+'" fill="'+
+  fill+'"><title>'+title+'</title></circle>';
+
+function drawWeights(g,gmv,tan,mu,S,rf){
+  const names=rows.map(r=>esc(r.name));
+  const cols=[["Minimum variance",gmv.w]];
+  if(tan) cols.push(["Tangency",tan.w]);
+  let h='<thead><tr><th>Asset</th>'+cols.map(c=>'<th>'+c[0]+'</th>').join("")+
+        '</tr></thead><tbody>';
+  names.forEach((nm,i)=>{
+    h+='<tr><td>'+nm+'</td>'+cols.map(c=>{
+      const v=c[1][i];
+      return '<td class="'+(v<0?"neg":"")+'">'+pct(v,1)+'</td>';
+    }).join("")+'</tr>';
+  });
+  h+='<tr><td><b>Gross exposure</b></td>'+cols.map(c=>'<td><b>'+
+     c[1].reduce((s,x)=>s+Math.abs(x),0).toFixed(2)+'&times;</b></td>').join("")+
+     '</tr></tbody>';
+  $("#weights").innerHTML=h;
+  const anyShort=cols.some(c=>c[1].some(v=>v<-1e-6));
+  $("#shortnote").innerHTML=anyShort?"Negative weights are short positions. "+
+    "Unconstrained mean-variance optimisation produces them freely, and they "+
+    "are the main reason textbook Markowitz weights are rarely implementable "+
+    "as they stand — gross exposure well above 1.0&times; is the "+
+    "optimiser taking estimated returns literally.":"";
+}
+
+function drawComplete(tan,rf,A){
+  const wrap=$("#completewrap");
+  if(!tan){wrap.style.display="none";return;}
+  wrap.style.display="";
+  const ladder=[1.5,2,3,5,8];
+  if(ladder.indexOf(A)<0) ladder.push(A);
+  ladder.sort((a,b)=>a-b);
+  let h='<thead><tr><th>Risk aversion</th><th>In tangency</th>'+
+        '<th>At risk-free</th><th>Expected return</th><th>Volatility</th>'+
+        '<th>Sharpe</th></tr></thead><tbody>';
+  ladder.forEach(a=>{
+    const y=(tan.r-rf)/(a*tan.v*tan.v);
+    const r=rf+y*(tan.r-rf), v=Math.abs(y)*tan.v;
+    h+='<tr'+(a===A?' style="font-weight:600"':'')+'><td>'+a.toFixed(1)+
+       '</td><td>'+pct(y,1)+'</td><td class="'+((1-y)<0?"neg":"")+'">'+
+       pct(1-y,1)+'</td><td>'+pct(r)+'</td><td>'+pct(v)+'</td><td>'+
+       ((r-rf)/v).toFixed(3)+'</td></tr>';
+  });
+  $("#complete").innerHTML=h+'</tbody>';
+}
+
+function drawGeom(g,rf,S){
+  const cond=conditionNumber(S);
+  $("#geom").innerHTML=
+    '<p class="note">The whole frontier reduces to four numbers computed from '+
+    'the expected returns &mu; and the covariance &Sigma;:</p>'+
+    '<div class="card" style="margin-top:8px"><table><thead><tr><th></th>'+
+    '<th></th><th>Value</th></tr></thead><tbody>'+
+    grow("A","1&prime;&Sigma;&#8315;&sup1;1",g.a)+
+    grow("B","1&prime;&Sigma;&#8315;&sup1;&mu;",g.b)+
+    grow("C","&mu;&prime;&Sigma;&#8315;&sup1;&mu;",g.c)+
+    grow("D","AC &minus; B&sup2;",g.d)+
+    '</tbody></table></div>'+
+    '<p class="note">Everything else follows. The frontier is the hyperbola '+
+    '&sigma;&sup2;(r) = (A r&sup2; &minus; 2B r + C) / D. Its vertex &mdash; '+
+    'the minimum-variance portfolio &mdash; sits at return B/A = '+
+    pct(g.gmvReturn)+' and volatility &radic;(1/A) = '+pct(g.gmvVol)+
+    '. Returns above B/A are efficient; returns below it are the dominated '+
+    'branch drawn dashed.</p>'+
+    '<p class="note">The highest Sharpe ratio available from these assets is '+
+    '&radic;(C &minus; 2&middot;r<sub>f</sub>&middot;B + r<sub>f</sub>&sup2;'+
+    '&middot;A) = '+maxSharpe(g,rf).toFixed(3)+', attained at the tangency '+
+    'portfolio provided r<sub>f</sub> &lt; B/A. As expected return grows the '+
+    'frontier flattens toward an asymptote of slope &radic;(D/A) = '+
+    g.asymptote.toFixed(3)+', which is why a risk-free rate at or above '+
+    pct(g.gmvReturn)+' leaves the problem with a supremum and no '+
+    'maximiser.</p>'+
+    '<p class="note">&Sigma; is inverted to get any of this, so its condition '+
+    'number &mdash; <b>'+cond.toLocaleString(undefined,
+      {maximumFractionDigits:0})+'</b> here &mdash; is roughly the factor by '+
+    'which errors in &mu; are amplified in the weights. On real data that '+
+    'number runs into the tens of thousands, which is the practical case for '+
+    'shrinkage estimators and for long-only constraints.</p>';
+}
+const grow=(k,f,v)=>'<tr><td><code>'+k+'</code></td><td>'+f+
+  '</td><td>'+v.toLocaleString(undefined,{maximumFractionDigits:3})+'</td></tr>';
+
+// Condition number via the symmetric eigenvalues, by Jacobi rotation. Small
+// n, so clarity beats speed.
+function conditionNumber(S){
+  const n=S.length;
+  let A=S.map(r=>r.slice());
+  for(let sweep=0;sweep<100;sweep++){
+    let off=0;
+    for(let i=0;i<n;i++) for(let j=i+1;j<n;j++) off+=A[i][j]*A[i][j];
+    if(off<1e-20) break;
+    for(let p=0;p<n;p++) for(let q=p+1;q<n;q++){
+      if(Math.abs(A[p][q])<1e-18) continue;
+      const theta=(A[q][q]-A[p][p])/(2*A[p][q]);
+      const t=Math.sign(theta||1)/(Math.abs(theta)+Math.sqrt(theta*theta+1));
+      const c=1/Math.sqrt(t*t+1), s=t*c;
+      for(let k=0;k<n;k++){
+        const akp=A[k][p], akq=A[k][q];
+        A[k][p]=c*akp-s*akq; A[k][q]=s*akp+c*akq;
+      }
+      for(let k=0;k<n;k++){
+        const apk=A[p][k], aqk=A[q][k];
+        A[p][k]=c*apk-s*aqk; A[q][k]=s*apk+c*aqk;
+      }
+    }
+  }
+  const e=A.map((r,i)=>Math.abs(r[i])).sort((a,b)=>a-b);
+  return e[0]>1e-18 ? e[n-1]/e[0] : Infinity;
+}
+
+// ---------------------------------------------------------------- wiring
+$("#assets").addEventListener("input",e=>{
+  const i=+e.target.dataset.i, k=e.target.dataset.k;
+  if(k===undefined) return;
+  rows[i][k] = k==="name" ? e.target.value : (parseFloat(e.target.value)||0);
+  render();
+});
+$("#assets").addEventListener("click",e=>{
+  const d=e.target.dataset.del;
+  if(d===undefined||rows.length<=2) return;
+  rows.splice(+d,1); drawAssets(); render();
+});
+$("#add").addEventListener("click",()=>{
+  rows.push({name:"Asset "+(rows.length+1),mu:8,sd:20});
+  drawAssets(); render();
+});
+$("#reset").addEventListener("click",()=>{
+  rows=DEFAULT.map(r=>Object.assign({},r));
+  $("#rho").value=0.35; $("#rf").value=2; $("#aversion").value=3;
+  drawAssets(); render();
+});
+["rho","rf","aversion"].forEach(id=>
+  $("#"+id).addEventListener("input",render));
+
+// Theme preference is a per-viewer convenience. It can throw in a private
+// window or with site data blocked, so every access is guarded and the page
+// renders correctly without it.
+(function(){
+  let saved=null;
+  try{saved=localStorage.getItem("fm-theme");}catch(e){}
+  if(saved) document.documentElement.setAttribute("data-theme",saved);
+  $("#theme").addEventListener("click",()=>{
+    const cur=document.documentElement.getAttribute("data-theme");
+    const next = cur==="dark" ? "light"
+      : cur==="light" ? "dark"
+      : (window.matchMedia&&window.matchMedia("(prefers-color-scheme:dark)")
+         .matches ? "light" : "dark");
+    document.documentElement.setAttribute("data-theme",next);
+    try{localStorage.setItem("fm-theme",next);}catch(e){}
+    render();
+  });
+})();
+
+$("#foot").innerHTML="Analysis tooling, not investment advice. This page computes the mean-variance frontier from the expected returns and volatilities you enter; those are assumptions, not forecasts, and the output is only as good as they are. Expected returns in particular are estimated with enormous error — Merton (1980) showed that pinning one down to useful precision takes decades of data, while a covariance converges in months — and mean-variance optimisation amplifies that error rather than absorbing it. Nothing here is a recommendation to buy or sell any security.";
+drawAssets();
+render();
+
+// Exposed so test_frontier_page.py can cross-check these numbers against
+// finmodel/quant/portfolio.py. Two implementations of one formula drift.
+window.__model={inv,geometry,volAt,maxSharpe,gmvPortfolio,targetReturn,
+                tangency,frontier,stats,conditionNumber};
+</script>
+</body>
+</html>
