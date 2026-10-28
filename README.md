@@ -23,7 +23,7 @@ No analyst estimates, no price targets, no buy/sell verdicts — see
 | **Sector** | Per-sector medians and quartiles; every company placed in its peer distribution |
 | **Research** | Written evidence summaries — strengths, concerns, valuation context, limits |
 | **Portfolio** | 6 strategies × 3 risk profiles × 3 allocation methods, with hard constraints |
-| **Quant** | DCF, CAPM/beta, Markowitz, VaR/CVaR, Black-Scholes, stochastic processes, Merton credit |
+| **Quant** | DCF, CAPM/beta, Markowitz frontier + CAL, VaR/CVaR, Black-Scholes, stochastic processes, Merton credit |
 
 ---
 
@@ -166,7 +166,7 @@ buy/sell language appears outside the disclaimer.
 for t in test_pipeline test_capm test_dcf test_quant test_stoch \
          test_foundation test_screener test_web test_valuation \
          test_streamlit test_yahoo test_returns test_performance \
-         test_edgar test_profiles test_concepts; do
+         test_edgar test_profiles test_concepts test_frontier; do
   python -W ignore $t.py
 done
 ```

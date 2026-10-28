@@ -107,6 +107,7 @@ PAGES = [("streamlit_app.py", "router"),
          ("views/screener.py", "screener"),
          ("views/company.py", "company"),
          ("views/portfolio.py", "portfolio"),
+         ("views/frontier.py", "frontier"),
          ("views/methodology.py", "methodology")]
 for path, label in PAGES:
     at = run(path)
@@ -232,6 +233,72 @@ if not priced_metrics_visible():
 else:
     ok("price-derived metrics served when explicitly enabled")
 _ui.SERVE_MARKET_DATA = False
+
+# --------------------------------------------------------------------------
+# Frontier page. It needs no database, so it must render on a fresh
+# deployment, and it must survive the parameter regimes that break the
+# underlying mathematics rather than raising on them.
+# --------------------------------------------------------------------------
+print("\n[9] efficient frontier and the CAL")
+
+SLIDERS = {"correlation": 0, "rf": 1, "aversion": 2}
+
+
+def frontier_at(**sliders):
+    at = AppTest.from_file(str(ROOT / "views" / "frontier.py"),
+                           default_timeout=120).run()
+    for name, val in sliders.items():
+        at.slider[SLIDERS[name]].set_value(val)
+    return at.run() if sliders else at
+
+
+at = frontier_at()
+if at.exception:
+    fail("frontier page raised: %s" % at.exception[0].message)
+else:
+    labels = {m.label for m in at.metric}
+    if {"Min-variance return", "Best Sharpe ratio"} <= labels:
+        ok("frontier page renders with no database")
+    else:
+        fail("frontier page rendered without its headline metrics: %s" % labels)
+
+# rf above the global minimum-variance return has no tangency portfolio. The
+# old normalisation divided by a negative number and returned the *minimum*
+# Sharpe portfolio as the maximum; the page must say so instead.
+at = frontier_at(rf=9.0)
+if at.exception:
+    fail("frontier page raised with rf above the GMV return: %s"
+         % at.exception[0].message)
+elif not any("No tangency portfolio" in w.value for w in at.warning):
+    fail("rf above the GMV return did not produce the no-tangency warning")
+elif any(m.label == "Best Sharpe ratio" and m.value != "—" for m in at.metric):
+    fail("a Sharpe ratio was reported where no tangency portfolio exists")
+else:
+    ok("rf above the GMV return is explained, not silently sign-flipped")
+
+# Near-perfect correlation leaves almost nothing to diversify away.
+at = frontier_at(correlation=0.95)
+if at.exception:
+    fail("frontier page raised at correlation 0.95: %s" % at.exception[0].message)
+elif at.error:
+    fail("frontier page errored at correlation 0.95: %s" % at.error[0].value)
+else:
+    ok("frontier page handles near-perfect correlation")
+
+# Risk aversion must move the split and nothing else.
+low = frontier_at(aversion=1.5)
+high = frontier_at(aversion=10.0)
+def risky(a):
+    return next((m.value for m in a.metric
+                 if m.label == "In the tangency portfolio"), None)
+lo_w, hi_w = risky(low), risky(high)
+if lo_w is None or hi_w is None:
+    fail("complete-portfolio split not rendered")
+elif float(lo_w.rstrip("%")) <= float(hi_w.rstrip("%")):
+    fail("higher risk aversion did not reduce the risky weight (%s vs %s)"
+         % (lo_w, hi_w))
+else:
+    ok("risk aversion sets the split (%s at A=1.5, %s at A=10)" % (lo_w, hi_w))
 
 # --------------------------------------------------------------------------
 print()

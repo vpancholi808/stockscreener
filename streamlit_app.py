@@ -37,6 +37,8 @@ nav = st.navigation([
             url_path="company"),
     st.Page("views/portfolio.py", title="Portfolio", icon="📁",
             url_path="portfolio"),
+    st.Page("views/frontier.py", title="Frontier", icon="📈",
+            url_path="frontier"),
     st.Page("views/methodology.py", title="Methodology", icon="📐",
             url_path="methodology"),
 ])

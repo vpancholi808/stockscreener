@@ -226,12 +226,26 @@ shared `Universe` (multi-ticker returns panel from the same price feed).
 from finmodel.quant import (Universe, MarkowitzOptimizer, risk_report,
                             stress_test, bs_price, bs_greeks, FactorModel)
 
-# --- Markowitz ---
+# --- Markowitz: the frontier ---
 u = Universe.from_tickers(["AAPL","MSFT","NVDA","XOM","JNJ"], lookback_years=5)
 opt = MarkowitzOptimizer.from_universe(u, rf=0.042, shrinkage=True)
-print(opt.max_sharpe())                 # tangency portfolio
+print(opt.summary())                    # A/B/C/D, GMV, tangency, CAL slope
+print(opt.geometry())                   # the four scalars the frontier reduces to
+print(opt.min_variance())               # needs no expected returns at all
 print(opt.optimize("min_variance", long_only=True))
-frontier = opt.efficient_frontier(points=25, long_only=True)
+
+frontier = opt.efficient_frontier(points=25)                  # efficient branch only
+both    = opt.efficient_frontier(points=25, include_inefficient=True)  # for plotting
+
+# --- The CAL: adding a risk-free asset ---
+cal = opt.capital_allocation_line()     # raises NoTangencyPortfolio if rf >= GMV return
+print(cal.tangency)                     # the one risky mix everyone holds
+print(cal.slope)                        # == tangency Sharpe == max attainable
+print(cal.return_at(0.15))              # rf + slope * sigma
+
+# Risk aversion sets the split and nothing else (two-fund separation).
+print(opt.complete_portfolio(risk_aversion=3.0))
+print(opt.complete_portfolio(target_volatility=0.10))
 
 # --- Risk: VaR / CVaR / stress ---
 from finmodel.quant import portfolio_returns
@@ -257,7 +271,36 @@ Method notes worth knowing:
   sample covariance when names ≈ observations). Annualized via the universe
   frequency.
 - **Markowitz** has an exact analytic path (shorts allowed) used to validate the
-  SLSQP constrained path (long-only / custom bounds).
+  SLSQP constrained path (long-only / custom bounds). The whole frontier reduces
+  to four scalars, A = 1'Σ⁻¹1, B = 1'Σ⁻¹μ, C = μ'Σ⁻¹μ and D = AC − B², exposed
+  as `geometry()`: GMV sits at return B/A and variance 1/A, and
+  σ²(r) = (Ar² − 2Br + C)/D traces the rest.
+- **`efficient_frontier` returns the efficient branch only.** Sampling target
+  returns from min(μ) upward puts half the points on the lower branch, where
+  every point is dominated by one directly above it at the same volatility.
+  `include_inefficient=True` returns the full hyperbola with an `efficient`
+  flag, for plotting.
+- **The tangency portfolio does not always exist.** w ∝ Σ⁻¹(μ − rf·1) is
+  normalised by κ = 1'Σ⁻¹(μ − rf·1) = B − rf·A, which is positive exactly when
+  rf is below the GMV return. Above it, dividing by a negative κ flips every
+  weight and returns the *minimum*-Sharpe portfolio as the maximum, so
+  `tangency()` raises `NoTangencyPortfolio` instead. The Sharpe ratio there
+  climbs toward the frontier's asymptotic slope √(D/A) without reaching it —
+  a supremum, not a portfolio. `tangency(long_only=True)` searches the simplex,
+  which is compact, so a maximum always exists.
+- **Max attainable Sharpe = √((μ−rf·1)'Σ⁻¹(μ−rf·1))**, equivalently
+  √(C − 2·rf·B + rf²·A). The test suite asserts the solved tangency portfolio
+  matches this closed form.
+- **The CAL beats every frontier portfolio but one.** `capital_allocation_line()`
+  gives E[r] = rf + S_t·σ, a straight line from (0, rf) whose slope is the
+  tangency Sharpe ratio. It touches the frontier at exactly one point; the test
+  suite verifies the gap bottoms out at the tangency volatility. The same line
+  is the Capital Market Line when the tangency portfolio is the market
+  portfolio.
+- **Complete portfolios** split between rf and the tangency portfolio:
+  y* = (E[r_t] − rf)/(A·σ_t²) maximises E[r] − (A/2)σ². Sharpe is constant along
+  the line — y changes how much risk you carry, never how well you are paid for
+  it.
 - **VaR** is a positive loss fraction. Cornish-Fisher adjusts the Gaussian
   quantile for skew and fat tails — use it over parametric for real return data.
 - **Greeks** units: vega per 1.00 vol (÷100 for per 1%), theta per year (÷365 for

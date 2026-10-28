@@ -115,6 +115,33 @@ and `from finmodel.quant import Universe, MarkowitzOptimizer, risk_report, ...`.
   site issuing verdicts is giving regulated investment advice, and a verdict
   built on data up to 12 months stale would be confidently wrong often enough
   to cause losses. Findings state evidence; readers conclude.
+- **The tangency portfolio does not always exist, and the failure is silent.**
+  w ∝ Σ⁻¹(μ − rf·1) normalised by κ = 1'Σ⁻¹(μ − rf·1) = B − rf·A. κ > 0 exactly
+  when rf is below the GMV return. Above it, `w / w.sum()` divides by a negative
+  number, flips every weight, and lands on the *inefficient* branch — it returns
+  the minimum-Sharpe portfolio labelled as the maximum. On the four-asset test
+  case at rf=5% that was Sharpe −0.34 where +0.30 was available. `tangency()`
+  now raises `NoTangencyPortfolio`, because along the efficient branch the
+  Sharpe ratio climbs toward the asymptotic slope √(D/A) without attaining it:
+  the maximum is a supremum, not a portfolio. `tangency(long_only=True)`
+  searches the simplex, which is compact, so it always has a solution. Do not
+  "fix" this by taking an absolute value — that returns a real portfolio for a
+  question that has no answer.
+- **`efficient_frontier` spans from the GMV return, not from μ.min().** The
+  frontier is a hyperbola with its vertex at the GMV portfolio, so sampling
+  target returns from the lowest asset return puts roughly half the points on
+  the dominated lower branch. Plotting that draws a sideways parabola; picking
+  from it by volatility silently selects the worse of the two portfolios at
+  that risk. `include_inefficient=True` returns both branches with an
+  `efficient` flag for plotting, and nothing else.
+- **A whole frontier is four scalars.** A, B, C, D in `geometry()`, cached on
+  the optimizer. Every closed form — GMV at (√(1/A), B/A), σ²(r) =
+  (Ar²−2Br+C)/D, max Sharpe √(C−2·rf·B+rf²·A), asymptote √(D/A) — is a function
+  of them. Recomputing Σ⁻¹ per call was the old pattern; don't reintroduce it.
+- **Sharpe is constant along the CAL.** `complete_portfolio` changes y, which
+  moves risk, never the reward-to-risk ratio. If a complete portfolio ever
+  reports a different Sharpe from its tangency portfolio, the weights and the
+  cash position have gone out of sync.
 - **Portfolio position and sector caps are satisfied JOINTLY**, by alternating
   until both hold (portfolio_builder._enforce_constraints). Applying them in
   sequence lets sector redistribution push a position back over its cap — this
@@ -177,6 +204,7 @@ streamlit_app.py       entry point: st.set_page_config + st.navigation ONLY
 views/screener.py      filter/sort/rank the universe
 views/company.py       statements, peer comparison, research note
 views/portfolio.py     build under constraints, or assess existing holdings
+views/frontier.py      efficient frontier, CAL, complete portfolio (no DB needed)
 views/methodology.py   thresholds, formulas, limitations
 finmodel/web/ui.py     cached DB reads, formatting, the licensing gate, footer
 ```

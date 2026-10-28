@@ -1,6 +1,8 @@
 """finmodel.quant — portfolio construction, risk, factors, and derivatives."""
 from .universe import Universe
-from .portfolio import MarkowitzOptimizer, Portfolio, ledoit_wolf_cov
+from .portfolio import (CapitalAllocationLine, CompletePortfolio,
+                        FrontierGeometry, MarkowitzOptimizer,
+                        NoTangencyPortfolio, Portfolio, ledoit_wolf_cov)
 from .risk import (RiskReport, risk_report, stress_test, historical_scenario,
                    portfolio_returns)
 from .options import bs_price, bs_greeks, implied_vol, Greeks

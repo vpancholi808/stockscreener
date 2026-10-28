@@ -63,7 +63,15 @@ sidebar.
 | **Screener** | Filter and sort the universe on 11 numeric criteria; download CSV |
 | **Company** | Statements, five-year history, peer comparison, research note |
 | **Portfolio** | Build under risk constraints, or assess a book you already hold |
+| **Frontier** | Efficient frontier, capital allocation line and the complete portfolio, over assumptions you set |
 | **Methodology** | Every threshold, every formula, and the known limitations |
+
+The Frontier page needs no database and no price feed — it works on a fresh
+deployment with nothing loaded. That is deliberate: Markowitz is a map from
+expected returns and a covariance to weights, and the expected returns are an
+assumption no data source supplies. You can upload a price CSV to set the
+covariance from history and still enter the returns yourself, which is the
+split the estimation-error literature recommends.
 
 Company pages are shareable: `?ticker=MU` selects a company from the URL.
 
