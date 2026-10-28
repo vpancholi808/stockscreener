@@ -60,8 +60,18 @@ def check(name: str, cond: bool, detail: str = "") -> bool:
 
 
 def note(msg: str) -> None:
+    """An observation rather than a pass/fail.
+
+    These are emitted as workflow notices as well as printed, because the
+    log archive is not reachable from every environment this gets read from
+    while the annotations API is. The observations are the whole point of a
+    real-data run — whether a tangency portfolio exists at all, how badly
+    conditioned the covariance is, how levered the unconstrained weights
+    get — so losing them to an unreachable log defeats the exercise.
+    """
     print("  .    %s" % msg)
     notes.append(msg)
+    annotate("notice", msg)
 
 
 def summary(lines: list[str]) -> None:
