@@ -77,9 +77,43 @@ jobs:
             echo "- \`$f\` ($(du -h "$f" | cut -f1))" >> "$GITHUB_STEP_SUMMARY"
           done
 
+      # enablement:true asks the API to create the Pages site. The Actions
+      # GITHUB_TOKEN cannot do that — creating a Pages site needs repo-admin
+      # rights, and the token has none however `permissions:` is set, so it
+      # comes back "Resource not accessible by integration". It is left on
+      # because it succeeds when the workflow is run with a PAT, and tolerated
+      # because the next step gives a far better message than its stack trace.
       - uses: actions/configure-pages@v5
+        id: configure
+        continue-on-error: true
         with:
           enablement: true
+
+      - name: Confirm Pages is turned on
+        if: steps.configure.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${{ github.repository }}/pages" >/dev/null 2>&1; then
+            echo "Pages is enabled; configure-pages failed for another reason."
+            exit 1
+          fi
+          echo "::error::GitHub Pages is not enabled for this repository, and \
+          a workflow cannot turn it on itself. A repository admin needs to \
+          open Settings -> Pages and set Source to 'GitHub Actions' (one \
+          dropdown, no branch to pick). Re-run this workflow afterwards and \
+          it will publish. The pages are built and committed either way."
+          {
+            echo "## Not published yet"
+            echo ""
+            echo "GitHub Pages is switched off for this repository, and a"
+            echo "workflow cannot switch it on — that needs repository admin"
+            echo "rights the Actions token does not have."
+            echo ""
+            echo "**Settings → Pages → Source: GitHub Actions**, then re-run"
+            echo "this workflow. Nothing else needs changing."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
       - uses: actions/upload-pages-artifact@v3
         with:
