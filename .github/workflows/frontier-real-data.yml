@@ -1,0 +1,70 @@
+name: frontier real data
+
+# Runs the Markowitz frontier, the tangency portfolio and the CAL against
+# live Yahoo prices for real S&P 500 constituents.
+#
+# test_frontier.py proves the mathematics on a well-conditioned synthetic
+# covariance, offline, on every push. That cannot show how the optimiser
+# behaves when the covariance is near-singular, when five years of monthly
+# returns leave the expected returns mostly noise, or when a realistic
+# risk-free rate sits above the minimum-variance return — all of which are
+# the normal case on real data rather than the exception.
+#
+# Needs no secrets: Yahoo only, no SEC, and nothing is written anywhere.
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Constituents to pull"
+        required: false
+        default: "40"
+      rf:
+        description: "Risk-free rate, annual decimal (e.g. 0.042)"
+        required: false
+        default: "0.042"
+      years:
+        description: "Years of monthly history"
+        required: false
+        default: "5"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate the frontier on real prices
+        env:
+          LIMIT: ${{ github.event.inputs.limit || '40' }}
+          RF: ${{ github.event.inputs.rf || '0.042' }}
+          YEARS: ${{ github.event.inputs.years || '5' }}
+        run: |
+          python validate_frontier_real.py \
+            --limit "$LIMIT" --rf "$RF" --years "$YEARS"
+
+      - name: Also check the case where a tangency portfolio exists
+        if: always()
+        env:
+          LIMIT: ${{ github.event.inputs.limit || '40' }}
+          YEARS: ${{ github.event.inputs.years || '5' }}
+        run: |
+          # A low risk-free rate puts rf below the minimum-variance return,
+          # which is the branch the default rf usually skips. Both branches
+          # need exercising: one raises NoTangencyPortfolio, the other
+          # builds the CAL.
+          python validate_frontier_real.py \
+            --limit "$LIMIT" --rf 0.005 --years "$YEARS"
