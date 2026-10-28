@@ -249,10 +249,10 @@ print(opt.complete_portfolio(target_volatility=0.10))
 
 # --- Risk: VaR / CVaR / stress ---
 from finmodel.quant import portfolio_returns
-port = portfolio_returns(u.returns, opt.max_sharpe().weights)
+w = cal.tangency.weights                    # or opt.tangency(long_only=True)
+port = portfolio_returns(u.returns, w)
 print(risk_report(port, confidence=0.95))   # hist/param/Cornish-Fisher VaR, CVaR, DD
-print(stress_test(opt.max_sharpe().weights,
-                  {"-10% market": {t: -0.10 for t in u.tickers}}))
+print(stress_test(w, {"-10% market": {t: -0.10 for t in u.tickers}}))
 
 # --- Options & Greeks ---
 print(bs_price(100, 105, 0.05, 0.22, 0.5, "call"))
