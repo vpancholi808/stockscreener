@@ -82,6 +82,33 @@ docker compose run --rm api python worker.py --seed
 
 ---
 
+## The published site
+
+Two static pages live in `site/` and deploy to GitHub Pages via the `pages`
+workflow:
+
+| Page | Needs data? | Built by |
+|---|---|---|
+| `index.html` | Yes — 497 real S&P 500 companies | `build_site.py`, committed by the `sp500 real data` workflow |
+| `frontier.html` | No | `build_frontier_page.py`, stdlib only, rebuilt on every deploy |
+
+The frontier page is fully self-contained: the inputs are assumptions the
+reader sets and the arithmetic runs in their browser, so it carries no SEC
+data, no price feed and no licensing constraint. Its JavaScript is a port of
+`finmodel/quant/portfolio.py`, and `test_frontier_page.py` loads the real page
+in headless Chromium and asserts the two agree — they match to 1e-16.
+
+**Pages has to be switched on once by hand.** A workflow cannot do it: creating
+a Pages site needs repository admin rights that the Actions token does not
+have. Go to **Settings → Pages → Source: GitHub Actions** (one dropdown, no
+branch to choose), then re-run the `pages` workflow. It serves at
+`https://vpancholi808.github.io/stockscreener/`.
+
+Only filings-derived data reaches the site. `SERVE_MARKET_DATA` is never set
+there, so price-derived fields are absent by construction.
+
+---
+
 ## Architecture
 
 ```
