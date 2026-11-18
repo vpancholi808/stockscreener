@@ -27,6 +27,14 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# The app is the surface most people actually open, so it carries the same
+# glass treatment as the published static pages. Injected once here rather
+# than per view: Streamlit reruns the whole script on every interaction, so a
+# per-view call would re-emit the identical style block on every click.
+from finmodel.web import theme  # noqa: E402
+
+theme.inject()
+
 # url_path is set explicitly rather than left to default off the filename, so
 # the links are stable if a view is ever renamed. A company page is shareable
 # as /company?ticker=MU.
