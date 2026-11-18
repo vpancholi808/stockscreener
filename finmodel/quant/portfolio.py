@@ -88,6 +88,103 @@ def ledoit_wolf_cov(returns: pd.DataFrame, annualize: int = 1) -> pd.DataFrame:
                         columns=returns.columns)
 
 
+# Loss tolerances, not risk-aversion coefficients. Each is the worst annual
+# drawdown the investor says they could hold through, at 95% confidence — a
+# one-in-twenty year. The labels are the ones people recognise; the numbers
+# are what the optimiser actually uses.
+RISK_PROFILES: dict[str, dict] = {
+    "conservative": {
+        "label": "Conservative",
+        "max_annual_loss": 0.08,
+        "summary": "Capital preservation first. A bad year costs under 8%.",
+    },
+    "moderate": {
+        "label": "Moderate",
+        "max_annual_loss": 0.15,
+        "summary": "Some growth, limited drawdown. A bad year costs about 15%.",
+    },
+    "balanced": {
+        "label": "Balanced",
+        "max_annual_loss": 0.22,
+        "summary": "Long horizon, ordinary market risk. A bad year costs about 22%.",
+    },
+    "growth": {
+        "label": "Growth",
+        "max_annual_loss": 0.32,
+        "summary": "Growth priority, able to sit through a deep fall.",
+    },
+    "aggressive": {
+        "label": "Aggressive",
+        "max_annual_loss": 0.45,
+        "summary": "Maximum long-run return, accepts severe drawdowns.",
+    },
+}
+
+
+@dataclass
+class InvestorAllocation:
+    """A portfolio sized to a loss the investor said they could live with.
+
+    `volatility_budget` is the annual volatility that loss tolerance implies.
+    When a return history is attached it is computed from the tangency
+    portfolio's own Cornish-Fisher quantile rather than the Gaussian one;
+    `volatility_budget_gaussian` is what the normal assumption would have
+    allowed, and the gap between them is the risk a Gaussian sizing would
+    have taken without the investor agreeing to it.
+    """
+    profile: str
+    max_annual_loss: float
+    confidence: float
+    volatility_budget: float
+    volatility_budget_gaussian: float
+    skew: float
+    excess_kurtosis: float
+    portfolio: "CompletePortfolio"
+    tangency: "Portfolio"
+    implied_risk_aversion: float
+    leverage_capped: bool
+    risk_free: float
+
+    @property
+    def tail_penalty(self) -> float:
+        """Volatility the fat-tail adjustment removed from the budget."""
+        return self.volatility_budget_gaussian - self.volatility_budget
+
+    @property
+    def expected_loss_at_confidence(self) -> float:
+        """The bad-year loss this allocation actually implies, Gaussian."""
+        from scipy import stats as _st
+        z = _st.norm.ppf(1 - self.confidence)
+        return -(self.portfolio.expected_return
+                 + z * self.portfolio.volatility)
+
+    def summary(self) -> str:
+        lines = [
+            f"{RISK_PROFILES.get(self.profile, {}).get('label', 'Custom')}: "
+            f"tolerates {self.max_annual_loss:.0%} in a "
+            f"1-in-{round(1 / (1 - self.confidence))} year",
+            f"  volatility budget {self.volatility_budget:.2%}"
+            + (f" (Gaussian would allow {self.volatility_budget_gaussian:.2%}; "
+               f"fat tails cost {self.tail_penalty:.2%})"
+               if abs(self.tail_penalty) > 1e-6 else ""),
+            f"  {self.portfolio.risky_weight:.1%} in the tangency portfolio, "
+            f"{self.portfolio.risk_free_weight:.1%} at "
+            f"{self.risk_free:.2%}",
+            f"  E[r]={self.portfolio.expected_return:.2%}  "
+            f"vol={self.portfolio.volatility:.2%}  "
+            f"Sharpe={self.portfolio.sharpe:.3f}",
+            f"  implied risk aversion A={self.implied_risk_aversion:.2f}",
+        ]
+        if self.leverage_capped:
+            lines.append(
+                "  capped at 100% invested: the stated tolerance would "
+                "support more risk than an unlevered book can carry")
+        return "\n".join(lines)
+
+    def __str__(self) -> str:
+        return self.summary()
+
+
 class NoTangencyPortfolio(ValueError):
     """No CAL from this risk-free rate touches the efficient branch.
 
@@ -463,6 +560,10 @@ class MarkowitzOptimizer:
         self.rf = float(rf)
         self._inv = np.linalg.pinv(self.cov)
         self._geometry: Optional[FrontierGeometry] = None
+        # Optional return panel, used only for the tail shape in
+        # for_investor(). Never replaces the covariance passed in.
+        self._history: Optional[pd.DataFrame] = None
+        self._periods_per_year: int = 252
 
         cond = self.condition_number
         if cond > _CONDITION_WARN:
@@ -594,6 +695,108 @@ class MarkowitzOptimizer:
             .complete_portfolio(risk_aversion=risk_aversion,
                                 target_volatility=target_volatility,
                                 target_return=target_return)
+
+    # ---- allocating for an investor --------------------------------------
+    def for_investor(self, profile: Optional[str] = None, *,
+                     max_annual_loss: Optional[float] = None,
+                     confidence: float = 0.95,
+                     tail_adjust: bool = True,
+                     allow_leverage: bool = False,
+                     long_only: bool = False) -> "InvestorAllocation":
+        """Build a portfolio from a loss the investor can live with.
+
+        Mean-variance theory parameterises risk tolerance as a coefficient A
+        in U = E[r] - (A/2)sigma^2. Nobody knows their A. People do know,
+        roughly, how large a fall they could sit through without selling,
+        and that is a VaR statement: "in a bad year, no worse than 20%".
+
+        So the chain runs loss tolerance -> volatility budget -> a point on
+        the capital allocation line, rather than starting from a coefficient
+        nobody can supply. The implied A comes back in the result, because it
+        is the number the textbook uses and it is worth seeing.
+
+        `profile` is a shorthand for a tolerance — see `RISK_PROFILES`. Pass
+        `max_annual_loss` instead to state it directly.
+
+        `tail_adjust` sizes against the Cornish-Fisher quantile of the
+        tangency portfolio's own return distribution rather than the Gaussian
+        one, when a return history is available via `attach_history`. Equity
+        returns are left-skewed and fat-tailed, so the Gaussian quantile
+        understates the bad year; a portfolio sized on it carries more risk
+        than the investor agreed to.
+
+        `allow_leverage=False` caps the risky weight at 100%. Borrowing to
+        reach a volatility target is a real option on the CAL and a poor fit
+        for most people stating a loss limit, so it is off by default.
+        """
+        from .risk import cal_volatility_for_loss_tolerance
+
+        if (profile is None) == (max_annual_loss is None):
+            raise ValueError("pass exactly one of profile or max_annual_loss")
+        if profile is not None:
+            key = str(profile).strip().lower()
+            if key not in RISK_PROFILES:
+                raise ValueError(
+                    "unknown profile %r; choose from %s"
+                    % (profile, ", ".join(RISK_PROFILES)))
+            max_annual_loss = RISK_PROFILES[key]["max_annual_loss"]
+        loss = float(max_annual_loss)
+
+        cal = self.capital_allocation_line(long_only=long_only)
+        tan = cal.tangency
+
+        skew = kurt = 0.0
+        if tail_adjust and self._history is not None:
+            port = self._history.reindex(columns=self.assets).dropna() \
+                   @ tan.weights.to_numpy()
+            if len(port) >= 60:
+                from scipy import stats as _st
+                # Annualise the shape of the distribution: skew and excess
+                # kurtosis both shrink as independent periods are added.
+                n = self._periods_per_year
+                skew = float(_st.skew(port)) / math.sqrt(n)
+                kurt = float(_st.kurtosis(port)) / n
+
+        # The budget is solved against the blended portfolio, not the risky
+        # fund alone: holding cash lowers the expected return as well as the
+        # volatility, so sizing on the tangency portfolio's own return
+        # overshoots the loss the investor agreed to.
+        budget_gauss = cal_volatility_for_loss_tolerance(
+            loss, self.rf, tan.sharpe, confidence)
+        budget = cal_volatility_for_loss_tolerance(
+            loss, self.rf, tan.sharpe, confidence, skew=skew,
+            excess_kurtosis=kurt) if (skew or kurt) else budget_gauss
+
+        y = budget / tan.volatility if tan.volatility > _TOL else 0.0
+        capped = allow_leverage is False and y > 1.0
+        if capped:
+            y = 1.0
+        cp = cal.allocate(y)
+
+        implied_a = float("nan")
+        if y > _TOL and tan.volatility > _TOL:
+            implied_a = (tan.expected_return - self.rf) / (y * tan.volatility ** 2)
+
+        return InvestorAllocation(
+            profile=(profile.lower() if profile else "custom"),
+            max_annual_loss=loss, confidence=confidence,
+            volatility_budget=budget,
+            volatility_budget_gaussian=budget_gauss,
+            skew=skew, excess_kurtosis=kurt,
+            portfolio=cp, tangency=tan, implied_risk_aversion=implied_a,
+            leverage_capped=capped, risk_free=self.rf)
+
+    def attach_history(self, returns: pd.DataFrame,
+                       periods_per_year: int = 252) -> "MarkowitzOptimizer":
+        """Give the optimizer the return panel its moments came from.
+
+        Only the tail shape is taken from it, for `for_investor`. The
+        covariance stays whatever was passed to the constructor, so a
+        shrunk covariance is not quietly replaced by the sample one.
+        """
+        self._history = returns
+        self._periods_per_year = int(periods_per_year)
+        return self
 
     # ---- diagnosing a portfolio someone holds ----------------------------
     def diagnose(self, weights, cash: Optional[float] = None

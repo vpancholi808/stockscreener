@@ -25,8 +25,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from finmodel.quant.portfolio import (MarkowitzOptimizer, NoTangencyPortfolio,
-                                      ledoit_wolf_cov)
+from finmodel.quant.portfolio import (RISK_PROFILES, MarkowitzOptimizer,
+                                      NoTangencyPortfolio, ledoit_wolf_cov)
 from finmodel.web import ui
 
 DEFAULT = pd.DataFrame({
@@ -168,10 +168,27 @@ rf = c1.slider("Risk-free rate %", 0.0, 10.0, 2.0, 0.1,
                help="The CAL starts here. Above the minimum-variance "
                     "portfolio's return there is no tangency portfolio at "
                     "all — the page will say so.") / 100
-aversion = c2.slider("Risk aversion (A)", 1.0, 10.0, 3.0, 0.5,
-                     help="The A in U = E[r] - (A/2)sigma^2. Two to four is "
-                          "the conventional range. It sets how much of the "
-                          "tangency portfolio you hold and nothing else.")
+max_loss = c2.slider(
+    "Worst year you could hold through %", 3.0, 60.0, 15.0, 1.0,
+    help="Nobody knows their risk-aversion coefficient, but most people know "
+         "roughly how far a portfolio could fall before they would sell. "
+         "That is a VaR statement, and it inverts into a volatility "
+         "budget.") / 100
+
+profile_names = [RISK_PROFILES[k]["label"] for k in RISK_PROFILES]
+picked = st.radio(
+    "Or start from a profile", ["Custom"] + profile_names, horizontal=True,
+    help="Each profile is a loss tolerance, not a coefficient.")
+if picked != "Custom":
+    key = next(k for k in RISK_PROFILES
+               if RISK_PROFILES[k]["label"] == picked)
+    max_loss = RISK_PROFILES[key]["max_annual_loss"]
+    st.caption(f"**{picked}** — {RISK_PROFILES[key]['summary']}")
+allow_leverage = st.checkbox(
+    "Allow borrowing to reach the target", value=False,
+    help="Off by default: borrowing to hit a volatility target is a real "
+         "option on the CAL and a poor fit for most people stating a loss "
+         "limit.")
 
 if mu is None or cov is None or len(mu) < 2:
     st.info("Add at least two assets to trace a frontier.")
@@ -403,31 +420,57 @@ if (w.select_dtypes("number") < -1e-6).any().any():
     )
 
 if cal is not None:
-    st.subheader("Your complete portfolio")
-    cp = cal.complete_portfolio(risk_aversion=aversion)
-    a, b, c = st.columns(3)
-    a.metric("In the tangency portfolio", f"{cp.risky_weight:.1%}")
-    b.metric("At the risk-free rate", f"{cp.risk_free_weight:.1%}")
-    c.metric("Expected return", f"{cp.expected_return:.2%}",
-             f"{cp.volatility:.2%} vol", delta_color="off")
-    if cp.is_levered:
-        st.caption(
-            f"Above 100% means borrowing at {rf:.2%} to lever the tangency "
-            f"portfolio. The arithmetic assumes you can borrow at the "
-            f"risk-free rate, which nobody can; a realistic borrowing rate "
-            f"kinks the CAL downward beyond the tangency point."
-        )
+    st.subheader("Your allocation")
+    alloc = opt.for_investor(max_annual_loss=max_loss,
+                             allow_leverage=allow_leverage)
+    cp = alloc.portfolio
+    a, b, c, d = st.columns(4)
+    a.metric("Expected return", f"{cp.expected_return:.2%}")
+    b.metric("Volatility", f"{cp.volatility:.2%}",
+             "capped at fully invested" if alloc.leverage_capped
+             else f"budget {alloc.volatility_budget:.2%}", delta_color="off")
+    c.metric("In the risky mix", f"{cp.risky_weight:.1%}",
+             f"{cp.risk_free_weight:.1%} cash", delta_color="off")
+    delivered = alloc.expected_loss_at_confidence
+    d.metric("Bad year (1 in 20)", f"−{delivered:.2%}",
+             "you asked for −%.0f%%" % (max_loss * 100)
+             if abs(delivered - max_loss) > 1e-6 else "exactly as asked",
+             delta_color="off")
+
+    if alloc.leverage_capped:
+        st.warning(
+            f"A {max_loss:.0%} tolerance would support "
+            f"{alloc.volatility_budget:.2%} of volatility, more than an "
+            f"unlevered book of these assets can carry "
+            f"({cal.tangency.volatility:.2%}). The allocation is capped at "
+            f"100% invested, so the bad year works out nearer "
+            f"{delivered:.2%}. Allow borrowing, or accept the lower risk.",
+            icon="🧱")
+    st.caption(
+        f"Implied risk aversion A = {alloc.implied_risk_aversion:.2f} — the "
+        f"textbook parameterisation of the same point on the line. Every "
+        f"investor here holds the same risky mix and differs only in how "
+        f"much of it they hold."
+    )
 
     ladder = pd.DataFrame([
-        {"Risk aversion": a_,
-         "In tangency": cal.complete_portfolio(risk_aversion=a_).risky_weight,
-         "Expected return":
-             cal.complete_portfolio(risk_aversion=a_).expected_return,
-         "Volatility": cal.complete_portfolio(risk_aversion=a_).volatility,
-         "Sharpe": cal.complete_portfolio(risk_aversion=a_).sharpe}
-        for a_ in (1.5, 2.0, 3.0, 5.0, 8.0)])
-    st.dataframe(ladder.style.format({"Risk aversion": "{:.1f}",
-                                      "In tangency": "{:.1%}",
+        {"Profile": RISK_PROFILES[k]["label"],
+         "Bad year": -opt.for_investor(
+             k, allow_leverage=allow_leverage).expected_loss_at_confidence,
+         "In risky": opt.for_investor(
+             k, allow_leverage=allow_leverage).portfolio.risky_weight,
+         "Cash": opt.for_investor(
+             k, allow_leverage=allow_leverage).portfolio.risk_free_weight,
+         "Expected return": opt.for_investor(
+             k, allow_leverage=allow_leverage).portfolio.expected_return,
+         "Volatility": opt.for_investor(
+             k, allow_leverage=allow_leverage).portfolio.volatility,
+         "Sharpe": opt.for_investor(
+             k, allow_leverage=allow_leverage).portfolio.sharpe}
+        for k in RISK_PROFILES])
+    st.dataframe(ladder.style.format({"Bad year": "{:.1%}",
+                                      "In risky": "{:.1%}",
+                                      "Cash": "{:.1%}",
                                       "Expected return": "{:.2%}",
                                       "Volatility": "{:.2%}",
                                       "Sharpe": "{:.3f}"}),

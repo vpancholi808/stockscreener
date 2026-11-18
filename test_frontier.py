@@ -359,6 +359,87 @@ try:
 except ValueError:
     check("non-finite mu raises", True)
 
+print("\n9) ALLOCATING FROM A LOSS THE INVESTOR CAN LIVE WITH")
+from scipy import stats as _st
+
+from finmodel.quant.portfolio import RISK_PROFILES
+
+_z95 = _st.norm.ppf(0.05)
+
+# The defining identity: a portfolio built for an X% bad year must actually
+# imply an X% bad year. Sizing against the tangency portfolio's own expected
+# return instead of the blended one breaks this, and breaks it upward for
+# any investor holding cash.
+for name in RISK_PROFILES:
+    alloc = opt.for_investor(name, allow_leverage=True)
+    cp = alloc.portfolio
+    delivered = -(cp.expected_return + _z95 * cp.volatility)
+    check(f"{name}: promises {alloc.max_annual_loss:.0%}, delivers "
+          f"{delivered:.2%}",
+          abs(delivered - alloc.max_annual_loss) < 1e-9)
+
+budgets = [opt.for_investor(n, allow_leverage=True).volatility_budget
+           for n in RISK_PROFILES]
+check("a larger tolerance buys a larger budget ("
+      + " < ".join(f"{b:.3f}" for b in budgets) + ")",
+      all(b < c for b, c in zip(budgets, budgets[1:])))
+check("every allocation sits on the CAL",
+      all(abs(opt.for_investor(n, allow_leverage=True).portfolio.sharpe
+              - tan.sharpe) < 1e-9 for n in RISK_PROFILES))
+
+# The implied risk aversion is the textbook parameterisation of the same
+# point, so feeding it back must reproduce the allocation.
+alloc = opt.for_investor("moderate", allow_leverage=True)
+again = cal.complete_portfolio(risk_aversion=alloc.implied_risk_aversion)
+check(f"implied A={alloc.implied_risk_aversion:.2f} reproduces the same "
+      f"portfolio ({again.risky_weight:.4f})",
+      abs(again.risky_weight - alloc.portfolio.risky_weight) < 1e-9)
+check("more tolerant investors get a lower implied A",
+      opt.for_investor("aggressive", allow_leverage=True).implied_risk_aversion
+      < opt.for_investor("conservative", allow_leverage=True).implied_risk_aversion)
+
+capped = opt.for_investor("aggressive")          # leverage off by default
+check("leverage is capped at fully invested by default",
+      capped.leverage_capped
+      and abs(capped.portfolio.risky_weight - 1.0) < 1e-12)
+check("and an unlevered cap is flagged, not silently applied",
+      capped.leverage_capped is True)
+check("a cautious profile needs no cap",
+      not opt.for_investor("conservative").leverage_capped)
+
+# Fat tails must cut the budget, never raise it: a left-skewed, heavy-tailed
+# portfolio reaches the stated loss at a lower volatility.
+hist = pd.DataFrame(
+    rng.standard_t(5, size=(1500, 4)) * SD / np.sqrt(5 / 3) / np.sqrt(252)
+    - 0.0004, columns=ASSETS)
+opt_h = MarkowitzOptimizer(MU, COV, rf=RF).attach_history(hist)
+a_tail = opt_h.for_investor("moderate", allow_leverage=True)
+a_flat = opt_h.for_investor("moderate", allow_leverage=True, tail_adjust=False)
+check(f"a fat-tailed history shrinks the budget "
+      f"({a_flat.volatility_budget:.4f} -> {a_tail.volatility_budget:.4f})",
+      a_tail.volatility_budget <= a_flat.volatility_budget)
+check("and the penalty is reported",
+      abs(a_tail.tail_penalty - (a_flat.volatility_budget
+                                 - a_tail.volatility_budget)) < 1e-12)
+check("attaching history leaves the covariance alone",
+      np.allclose(opt_h.cov, MarkowitzOptimizer(MU, COV, rf=RF).cov))
+
+try:
+    opt.for_investor("reckless")
+    check("an unknown profile must raise", False)
+except ValueError:
+    check("an unknown profile raises", True)
+try:
+    opt.for_investor("moderate", max_annual_loss=0.2)
+    check("profile and loss together must raise", False)
+except ValueError:
+    check("profile and an explicit loss together raise", True)
+try:
+    opt.for_investor()
+    check("neither profile nor loss must raise", False)
+except ValueError:
+    check("neither profile nor loss raises", True)
+
 print("=" * 64)
 print("ALL PASSED" if not fails else f"FAILURES: {fails}")
 sys.exit(1 if fails else 0)

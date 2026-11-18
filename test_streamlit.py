@@ -241,7 +241,7 @@ _ui.SERVE_MARKET_DATA = False
 # --------------------------------------------------------------------------
 print("\n[9] efficient frontier and the CAL")
 
-SLIDERS = {"correlation": 0, "rf": 1, "aversion": 2}
+SLIDERS = {"correlation": 0, "rf": 1, "loss": 2}
 
 
 def frontier_at(**sliders):
@@ -285,20 +285,32 @@ elif at.error:
 else:
     ok("frontier page handles near-perfect correlation")
 
-# Risk aversion must move the split and nothing else.
-low = frontier_at(aversion=1.5)
-high = frontier_at(aversion=10.0)
+# The loss tolerance must move the split, and a portfolio built for an X%
+# bad year must actually imply an X% bad year.
+low = frontier_at(loss=6.0)
+high = frontier_at(loss=30.0)
 def risky(a):
     return next((m.value for m in a.metric
-                 if m.label == "In the tangency portfolio"), None)
+                 if m.label == "In the risky mix"), None)
+def badyear(a):
+    return next((m.value for m in a.metric
+                 if m.label == "Bad year (1 in 20)"), None)
 lo_w, hi_w = risky(low), risky(high)
 if lo_w is None or hi_w is None:
-    fail("complete-portfolio split not rendered")
-elif float(lo_w.rstrip("%")) <= float(hi_w.rstrip("%")):
-    fail("higher risk aversion did not reduce the risky weight (%s vs %s)"
+    fail("allocation split not rendered")
+elif float(lo_w.rstrip("%")) >= float(hi_w.rstrip("%")):
+    fail("a larger loss tolerance did not buy more risk (%s vs %s)"
          % (lo_w, hi_w))
 else:
-    ok("risk aversion sets the split (%s at A=1.5, %s at A=10)" % (lo_w, hi_w))
+    ok("loss tolerance sets the split (%s at 6%%, %s at 30%%)" % (lo_w, hi_w))
+
+delivered = badyear(low)
+if delivered is None:
+    fail("the delivered bad year is not reported")
+elif abs(float(delivered.replace("\u2212", "-").rstrip("%")) + 6.0) > 0.01:
+    fail("asked for a 6%% bad year and the allocation implies %s" % delivered)
+else:
+    ok("a 6%% tolerance delivers a %s bad year" % delivered)
 
 # The held-portfolio diagnosis must agree with the library, not just render.
 # Three surfaces compute this now — library, Streamlit, static page — and the

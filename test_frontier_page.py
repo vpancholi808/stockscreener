@@ -120,8 +120,13 @@ with sync_playwright() as p:
     check("weights table has a row per asset",
           page.locator("#weights tbody tr").count() == 5,  # 4 + gross exposure
           "%d rows" % page.locator("#weights tbody tr").count())
-    check("complete-portfolio ladder rendered",
-          page.locator("#complete tbody tr").count() >= 5)
+    check("the profile ladder has a row per risk profile",
+          page.locator("#complete tbody tr").count() == 5,
+          "%d rows" % page.locator("#complete tbody tr").count())
+    check("the risk-profile chooser is rendered",
+          page.locator(".prof").count() == 5)
+    check("one profile is selected",
+          page.locator('.prof[aria-pressed="true"]').count() == 1)
 
     args = {"mu": [m / 100 for m in MU_PCT], "sd": [s / 100 for s in SD_PCT],
             "rho": RHO, "rf": 0.02}
@@ -211,16 +216,16 @@ with sync_playwright() as p:
     page.locator("#rf").evaluate(
         "el => { el.value = 9; el.dispatchEvent(new Event('input')); }")
     page.wait_for_timeout(120)
-    warn = page.locator("#alert .warn").inner_text() if \
-        page.locator("#alert .warn").count() else ""
+    warn = page.locator("#alert .warnbox").inner_text() if \
+        page.locator("#alert .warnbox").count() else ""
     check("a no-tangency explanation is shown",
           "No tangency portfolio exists" in warn,
           warn[:60])
-    sharpe_tile = page.locator("#stats .stat").nth(3).inner_text()
+    sharpe_tile = page.locator("#stats .stat").nth(2).inner_text()
     check("no Sharpe ratio is reported where none exists",
           "—" in sharpe_tile, sharpe_tile.replace("\n", " ")[:50])
-    check("the complete-portfolio section is hidden",
-          not page.locator("#completewrap").is_visible())
+    check("the profile ladder is emptied rather than left stale",
+          page.locator("#complete tbody tr").count() == 0)
 
     print("\n7) CONDITION NUMBER AGREES WITH NUMPY")
     sd = np.array([s / 100 for s in SD_PCT])
@@ -289,7 +294,52 @@ with sync_playwright() as p:
     check("the CAL gap is at least the frontier gap",
           jd["calGap"] >= jd["returnGap"] - 1e-12)
 
-    print("\n9) THE ARTIFACT BUILD IS A FRAGMENT, NOT A DOCUMENT")
+    print("\n9) THE INVESTOR ALLOCATOR MATCHES THE PYTHON")
+    ALLOC_JS = """
+    (args) => {
+      const {mu, sd, rho, rf, loss, lev} = args;
+      const S = sd.map((a,i)=>sd.map((b,j)=>a*b*(i===j?1:rho)));
+      const g = window.__model.geometry(mu, S);
+      const tan = window.__model.tangency(g, mu, S, rf);
+      const a = window.__model.forInvestor(loss, rf, tan, lev,
+                                           window.__model.Z95);
+      return a && {budget:a.budget, y:a.y, r:a.r, v:a.v, sharpe:a.sharpe,
+                   cash:a.cash, capped:a.capped, impliedA:a.impliedA,
+                   delivered:a.delivered, w:a.w};
+    }
+    """
+    from finmodel.quant.portfolio import RISK_PROFILES
+    for key, spec in RISK_PROFILES.items():
+        for lev in (True, False):
+            js = page.evaluate(ALLOC_JS, dict(args, loss=spec["max_annual_loss"],
+                                              lev=lev))
+            py = python_model(0.02).for_investor(key, allow_leverage=lev)
+            pairs = [("budget", js["budget"], py.volatility_budget),
+                     ("risky weight", js["y"], py.portfolio.risky_weight),
+                     ("expected return", js["r"], py.portfolio.expected_return),
+                     ("volatility", js["v"], py.portfolio.volatility),
+                     ("cash", js["cash"], py.portfolio.risk_free_weight),
+                     ("implied A", js["impliedA"], py.implied_risk_aversion)]
+            bad = [n for n, a, b in pairs if not close(a, b, 1e-9)]
+            check("%s%s: all six figures agree"
+                  % (key, " (levered)" if lev else ""), not bad,
+                  "disagree: %s" % ", ".join(bad) if bad else
+                  "vol %.4f, %.1f%% risky" % (js["v"], js["y"] * 100))
+            check("%s%s: capped flag agrees" % (key, " (levered)" if lev else ""),
+                  bool(js["capped"]) == bool(py.leverage_capped))
+            dw = max(abs(a - b) for a, b in
+                     zip(js["w"], py.portfolio.asset_weights.to_numpy()))
+            check("%s%s: holdings agree" % (key, " (levered)" if lev else ""),
+                  dw < 1e-10, "max diff %.2e" % dw)
+
+    # The identity the whole feature rests on: ask for an X% bad year, get one.
+    for loss in (0.08, 0.15, 0.30):
+        js = page.evaluate(ALLOC_JS, dict(args, loss=loss, lev=True))
+        check("a %.0f%% tolerance delivers exactly that in the browser"
+              % (loss * 100), abs(js["delivered"] - loss) < 1e-9,
+              "delivered %.6f" % js["delivered"])
+
+    print("\n10) THE ARTIFACT BUILD IS A FRAGMENT, NOT A DOCUMENT")
     # The Artifact platform wraps the file in its own skeleton and sets the
     # theme on the root element. A second <html>/<body>, or a theme toggle
     # fighting the host's data-theme, both break it.

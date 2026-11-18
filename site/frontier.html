@@ -6,200 +6,268 @@
 <title>Efficient frontier and the CAL</title>
 <meta name="description" content="Markowitz efficient frontier, the capital allocation line and the complete portfolio, computed live from assumptions you set.">
 <style>
+/* Layout: a sticky glass control panel on the left, the frontier canvas and
+   its readouts on the right. Glassmorphism needs something to blur against,
+   so a fixed gradient mesh sits behind everything — cool and bright in light
+   mode, warm and deep in dark, with every colour defined as a token so both
+   themes are designed rather than inverted. */
 :root{
-  --bg:#ffffff; --panel:#f5f7f8; --line:#dde4e7; --ink:#15232b;
-  --muted:#5d727e; --accent:#1f4e5f; --good:#2f7d5d; --bad:#a8402f;
-  --curve:#7e8c93; --cal:#2a6fdb; --dash:#c2c8cc; --held:#b06a1f;
+  --base:#e9edf2;
+  --m1:rgba(120,170,210,.55); --m2:rgba(190,150,215,.40);
+  --m3:rgba(240,185,140,.45); --m4:rgba(130,205,195,.38);
+  --glass:rgba(255,255,255,.58); --glass-2:rgba(255,255,255,.74);
+  --edge:rgba(255,255,255,.80); --border:rgba(20,34,44,.12);
+  --ink:#152430; --muted:#5a7180; --faint:#8699a6;
+  --accent:#1c6a86; --accent-soft:rgba(28,106,134,.12);
+  --good:#2c7a5a; --good-soft:rgba(44,122,90,.14);
+  --bad:#a63f2e;  --bad-soft:rgba(166,63,46,.14);
+  --warn:#9c6516; --warn-soft:rgba(156,101,22,.14);
+  --curve:#7d8a92; --cal:#2a6fdb; --held:#bd6a25; --dash:rgba(20,34,44,.22);
+  --shadow:0 10px 34px rgba(14,26,36,.12);
   --display:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif; --body:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --panel-w:366px;
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
-    --bg:#10181c; --panel:#16202600; --panel:#162026; --line:#26343c;
-    --ink:#e6eef2; --muted:#93a8b3; --accent:#7fc3d6; --good:#5fbf92;
-    --bad:#e08b7a; --curve:#9aa6ad; --cal:#6ea8f0; --dash:#3b4950;
-    --held:#e0a35f;
+    --base:#0a1014;
+    --m1:rgba(40,95,125,.55); --m2:rgba(95,60,120,.42);
+    --m3:rgba(165,95,45,.45); --m4:rgba(30,110,100,.38);
+    --glass:rgba(26,36,44,.56); --glass-2:rgba(32,44,53,.74);
+    --edge:rgba(255,255,255,.12); --border:rgba(255,255,255,.11);
+    --ink:#e7eff4; --muted:#93a9b6; --faint:#6f8593;
+    --accent:#6ec2d8; --accent-soft:rgba(110,194,216,.14);
+    --good:#58bd8f; --good-soft:rgba(88,189,143,.16);
+    --bad:#e08d7b;  --bad-soft:rgba(224,141,123,.16);
+    --warn:#dfa95f; --warn-soft:rgba(223,169,95,.16);
+    --curve:#95a2aa; --cal:#6ea8f0; --held:#dd9a52;
+    --dash:rgba(255,255,255,.20);
+    --shadow:0 10px 34px rgba(0,0,0,.42);
     color-scheme:dark;
   }
 }
 :root[data-theme="dark"]{
-  --bg:#10181c; --panel:#162026; --line:#26343c; --ink:#e6eef2;
-  --muted:#93a8b3; --accent:#7fc3d6; --good:#5fbf92; --bad:#e08b7a;
-  --curve:#9aa6ad; --cal:#6ea8f0; --dash:#3b4950; --held:#e0a35f;
+  --base:#0a1014;
+  --m1:rgba(40,95,125,.55); --m2:rgba(95,60,120,.42);
+  --m3:rgba(165,95,45,.45); --m4:rgba(30,110,100,.38);
+  --glass:rgba(26,36,44,.56); --glass-2:rgba(32,44,53,.74);
+  --edge:rgba(255,255,255,.12); --border:rgba(255,255,255,.11);
+  --ink:#e7eff4; --muted:#93a9b6; --faint:#6f8593;
+  --accent:#6ec2d8; --accent-soft:rgba(110,194,216,.14);
+  --good:#58bd8f; --good-soft:rgba(88,189,143,.16);
+  --bad:#e08d7b;  --bad-soft:rgba(224,141,123,.16);
+  --warn:#dfa95f; --warn-soft:rgba(223,169,95,.16);
+  --curve:#95a2aa; --cal:#6ea8f0; --held:#dd9a52;
+  --dash:rgba(255,255,255,.20);
+  --shadow:0 10px 34px rgba(0,0,0,.42);
   color-scheme:dark;
 }
 *{box-sizing:border-box}
-.verdict{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;
-  margin:0 0 10px;font:600 17px/1.3 var(--display)}
-.pill{font:600 11px/1 var(--body);text-transform:uppercase;
-  letter-spacing:.07em;padding:4px 8px;border-radius:999px;
-  border:1px solid var(--line);color:var(--muted)}
-.pill.off{color:var(--held);border-color:var(--held)}
-.pill.on{color:var(--good);border-color:var(--good)}
-.gaps{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
-  gap:14px;margin:14px 0 0}
-.gap b{display:block;font:600 21px/1.2 var(--display);
-  font-variant-numeric:tabular-nums}
-.gap span{color:var(--muted);font-size:12px;display:block;margin-top:2px}
-body{margin:0;background:var(--bg);color:var(--ink);
+body{margin:0;background:var(--base);color:var(--ink);
   font:15px/1.55 var(--body);-webkit-text-size-adjust:100%}
-.wrap{max-width:1180px;margin:0 auto;
+.mesh{position:fixed;inset:-20%;z-index:-1;pointer-events:none;
+  filter:blur(70px) saturate(130%);
+  background:
+    radial-gradient(38% 42% at 12% 18%, var(--m1) 0%, transparent 70%),
+    radial-gradient(34% 38% at 86% 12%, var(--m2) 0%, transparent 70%),
+    radial-gradient(42% 46% at 78% 82%, var(--m3) 0%, transparent 72%),
+    radial-gradient(36% 40% at 22% 88%, var(--m4) 0%, transparent 70%);}
+.wrap{max-width:1420px;margin:0 auto;
   padding-left:max(16px,env(safe-area-inset-left,0px));
   padding-right:max(16px,env(safe-area-inset-right,0px));
-  padding-block:0 56px}
-header{border-bottom:1px solid var(--line);padding-block:26px 18px}
-h1{margin:0 0 6px;font:600 29px/1.15 var(--display);letter-spacing:-.015em;
-  text-wrap:balance}
-h2{font:600 18px/1.3 var(--display);margin:30px 0 10px;letter-spacing:-.01em}
-.sub{color:var(--muted);margin:0 0 10px;max-width:68ch}
-.nav{margin:0 0 14px;display:flex;gap:10px;align-items:center}
-.nav a{color:var(--accent);text-decoration:none;font-size:14px}
-.nav a:hover{text-decoration:underline}
-.grid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);
-  gap:26px;align-items:start}
-/* Grid items default to min-width:auto, so a wide table inside one pushes the
-   page sideways even though the table has its own overflow container. */
-.grid>*{min-width:0}
-@media (max-width:860px){.grid{grid-template-columns:1fr}}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
-  padding:14px;min-width:0}
-.tablebox{overflow-x:auto;min-width:0}
-table{border-collapse:collapse;width:100%;
-  font-variant-numeric:tabular-nums}
-th,td{padding:7px 9px;text-align:right;border-bottom:1px solid var(--line);
-  font-size:14px;white-space:nowrap}
-th:first-child,td:first-child{text-align:left}
-th{color:var(--muted);font-size:11px;text-transform:uppercase;
-  letter-spacing:.07em;font-weight:600}
-tbody tr:last-child td{border-bottom:0}
-input,select,button{font:inherit;color:inherit;background:var(--bg);
-  border:1px solid var(--line);border-radius:6px;padding:5px 7px}
-input[type=number]{width:80px;text-align:right;
-  font-variant-numeric:tabular-nums}
-input[type=text]{width:100%;min-width:84px}
+  padding-block:18px 56px}
+.glass{background:var(--glass);
+  -webkit-backdrop-filter:blur(22px) saturate(150%);
+  backdrop-filter:blur(22px) saturate(150%);
+  border:1px solid var(--border);border-radius:18px;
+  box-shadow:var(--shadow),inset 0 1px 0 var(--edge)}
+.topbar{display:flex;align-items:center;justify-content:space-between;
+  gap:16px;flex-wrap:wrap;padding:16px 20px;margin-bottom:18px}
+h1{margin:0;font:600 23px/1.2 var(--display);letter-spacing:-.015em}
+.sub{color:var(--muted);margin:3px 0 0;font-size:13.5px;max-width:62ch}
+h2{font:600 13px/1.3 var(--body);margin:0 0 12px;color:var(--faint);
+  text-transform:uppercase;letter-spacing:.09em}
+h3{font:600 16px/1.3 var(--display);margin:0 0 10px;letter-spacing:-.01em}
+.shell{display:grid;grid-template-columns:var(--panel-w) minmax(0,1fr);
+  gap:18px;align-items:start}
+.shell>*{min-width:0}
+@media (max-width:1040px){.shell{grid-template-columns:1fr}
+  .panel{position:static!important}}
+.panel{position:sticky;top:18px;display:flex;flex-direction:column;gap:14px}
+main{display:flex;flex-direction:column;gap:14px;min-width:0}
+.card{padding:16px 18px}
+/* Profile chooser: a vertical segmented control. */
+.profiles{display:flex;flex-direction:column;gap:6px}
+.prof{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  width:100%;text-align:left;padding:9px 12px;border-radius:12px;
+  border:1px solid transparent;background:transparent;cursor:pointer;
+  color:var(--ink);font:inherit;transition:background .15s,border-color .15s}
+.prof:hover{background:var(--accent-soft)}
+.prof[aria-pressed="true"]{background:var(--accent-soft);
+  border-color:var(--accent)}
+.prof b{font:600 14px/1.2 var(--body)}
+.prof span{color:var(--muted);font-size:12px;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.prof em{display:block;font-style:normal;color:var(--faint);font-size:11.5px;
+  margin-top:2px;font-weight:400}
+.slider{margin:14px 0 0}
+.slider label{display:flex;justify-content:space-between;gap:10px;
+  font-size:12.5px;color:var(--muted);margin-bottom:5px}
+.slider label b{color:var(--ink);font-variant-numeric:tabular-nums}
 input[type=range]{width:100%;padding:0;background:none;border:0;
   accent-color:var(--accent)}
-button{cursor:pointer;background:var(--panel)}
-button:hover{border-color:var(--accent)}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0 0}
-.slider{margin:16px 0}
-.slider label{display:flex;justify-content:space-between;gap:10px;
-  font-size:13px;color:var(--muted);margin-bottom:4px}
-.slider label b{color:var(--ink);font-variant-numeric:tabular-nums}
-.stats{display:flex;flex-wrap:wrap;gap:12px 26px;margin:16px 0 6px}
-.stat{min-width:0}
-.stat b{display:block;font:600 23px/1.2 var(--display);
+input,button,select{font:inherit;color:inherit}
+input[type=number],input[type=text]{background:var(--glass-2);
+  border:1px solid var(--border);border-radius:9px;padding:5px 7px}
+input[type=number]{width:58px;text-align:right;
   font-variant-numeric:tabular-nums}
-.stat span{color:var(--muted);font-size:11px;text-transform:uppercase;
-  letter-spacing:.07em}
-.stat i{font-style:normal;color:var(--muted);font-size:12px}
-.warn{border:1px solid var(--line);border-left:3px solid var(--bad);
-  background:var(--panel);border-radius:8px;padding:12px 14px;margin:16px 0;
-  font-size:14px}
-.warn b{display:block;margin-bottom:4px}
-.note{color:var(--muted);font-size:13.5px;max-width:76ch;margin:10px 0 0}
-.chartbox{overflow-x:auto;margin-top:18px}
-.chartbox svg{display:block;width:100%;min-width:660px;height:auto}
-details{margin-top:24px;border-top:1px solid var(--line);padding-top:12px}
-summary{cursor:pointer;color:var(--accent);font-size:14px}
-code{background:var(--panel);border:1px solid var(--line);border-radius:4px;
-  padding:1px 5px;font-size:12.5px}
-footer{margin-top:40px;border-top:1px solid var(--line);padding-top:14px;
-  color:var(--muted);font-size:12.5px;max-width:80ch}
+input[type=text]{width:100%;min-width:58px}
+button{cursor:pointer}
+.btn{background:var(--glass-2);border:1px solid var(--border);
+  border-radius:10px;padding:6px 11px;font-size:13px}
+.btn:hover{border-color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.toggle{display:flex;align-items:center;gap:8px;margin-top:14px;
+  font-size:12.5px;color:var(--muted);cursor:pointer}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.tablebox{overflow-x:auto;min-width:0;margin:0 -4px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{padding:6px 4px;text-align:right;font-size:13.5px;white-space:nowrap;
+  border-bottom:1px solid var(--border)}
+#assets input{padding:5px 6px;font-size:13px}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--faint);font-size:10.5px;text-transform:uppercase;
+  letter-spacing:.07em;font-weight:600}
+tbody tr:last-child td{border-bottom:0}
+/* Stat tiles: label, big number, delta chip. */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));
+  gap:14px}
+.stat{padding:14px 16px}
+.stat span{display:block;color:var(--faint);font-size:10.5px;
+  text-transform:uppercase;letter-spacing:.08em}
+.stat b{display:block;font:600 25px/1.15 var(--display);margin:6px 0 7px;
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.chip{display:inline-block;font-size:11.5px;padding:3px 8px;border-radius:999px;
+  background:var(--accent-soft);color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.chip.good{background:var(--good-soft);color:var(--good)}
+.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chartbox{overflow-x:auto;padding:12px}
+.chartbox svg{display:block;width:100%;min-width:620px;height:auto}
+.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+@media (max-width:760px){.split{grid-template-columns:1fr}}
+/* Allocation bar: risky versus cash, read at a glance. */
+.alloc{display:flex;height:13px;border-radius:999px;overflow:hidden;
+  border:1px solid var(--border);margin:12px 0 8px}
+.alloc i{display:block;height:100%}
+.alloc .risky{background:var(--accent)}
+.alloc .cash{background:var(--dash)}
+.alloc .lev{background:var(--held)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.legend s{text-decoration:none;display:inline-block;width:9px;height:9px;
+  border-radius:3px;margin-right:5px;vertical-align:baseline}
+.warnbox{border-left:3px solid var(--warn);padding:12px 15px;font-size:13.5px}
+.warnbox b{display:block;margin-bottom:3px;color:var(--ink)}
+.note{color:var(--muted);font-size:12.5px;max-width:74ch;margin:9px 0 0}
+details{margin-top:12px}
+summary{cursor:pointer;color:var(--accent);font-size:13px}
+code{background:var(--accent-soft);border-radius:4px;padding:1px 5px;
+  font-size:12px}
+footer{margin-top:22px;padding:14px 18px;color:var(--muted);font-size:12px;
+  max-width:92ch}
 .pos{color:var(--good)} .neg{color:var(--bad)}
-.del{padding:3px 8px;line-height:1}
+.del{padding:2px 7px;line-height:1;border-radius:8px;
+  border:1px solid transparent;background:transparent;color:var(--faint)}
+.del:hover{border-color:var(--bad);color:var(--bad)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;
   transition:none!important}}
 </style>
 </head>
 <body>
 
+<div class="mesh" aria-hidden="true"></div>
 <div class="wrap">
 
-<header>
-  <h1>Efficient frontier and the CAL</h1>
-  <p class="sub">Mean-variance optimisation over assumptions you set. Every
-  number below follows from the table &mdash; change one and the frontier
-  moves. Nothing is fetched and nothing is stored; the arithmetic runs in your
-  browser.</p>
+<header class="topbar glass">
+  <div>
+    <h1>Efficient frontier and the CAL</h1>
+    <p class="sub">Tell it how much you could lose in a bad year. It sizes a
+    portfolio to that, puts it on the efficient frontier, and shows where the
+    book you already hold sits against it.</p>
+  </div>
   <p class="nav"><a href="./index.html">&larr; Equity health screener</a><button id="theme" style="padding:3px 9px">&#9680; Theme</button></p>
 </header>
 
-<div class="grid">
-  <div>
-    <h2>Assets</h2>
-    <div class="card">
+<div class="shell">
+  <aside class="panel">
+    <section class="glass card">
+      <h2>Your risk profile</h2>
+      <div class="profiles" id="profiles" role="group"
+           aria-label="Risk profile"></div>
+      <div class="slider">
+        <label for="loss">Worst year you could hold through
+          <b id="lossv">15%</b></label>
+        <input type="range" id="loss" min="3" max="60" step="1" value="15">
+      </div>
+      <label class="toggle"><input type="checkbox" id="lev">
+        Allow borrowing to reach the target</label>
+      <p class="note" id="profnote"></p>
+    </section>
+
+    <section class="glass card">
+      <h2>Market assumptions</h2>
       <div class="tablebox">
         <table id="assets"><thead><tr>
-          <th>Asset</th><th>Expected return</th><th>Volatility</th>
-          <th>You hold</th><th></th>
+          <th>Asset</th><th>Return</th><th>Vol</th><th>You hold</th><th></th>
         </tr></thead><tbody></tbody></table>
       </div>
       <div class="row">
-        <button id="add">Add asset</button>
-        <button id="reset">Reset</button>
-        <span class="note" style="margin:0">Annual percentages.
-        Holdings under 100% leave the rest in cash: <b id="cashw">0%</b>.</span>
+        <button class="btn" id="add">Add asset</button>
+        <button class="btn" id="reset">Reset</button>
       </div>
-    </div>
+      <p class="note" style="margin-top:8px">Annual percentages. Holdings
+      under 100% leave the rest in cash: <b id="cashw">0%</b>.</p>
+      <div class="slider">
+        <label for="rho">Correlation between every pair
+          <b id="rhov">0.35</b></label>
+        <input type="range" id="rho" min="-0.30" max="0.95" step="0.05"
+               value="0.35">
+      </div>
+      <div class="slider">
+        <label for="rf">Risk-free rate <b id="rfv">2.00%</b></label>
+        <input type="range" id="rf" min="0" max="10" step="0.1" value="2">
+      </div>
+    </section>
+  </aside>
 
-    <div class="slider">
-      <label for="rho">Correlation between every pair <b id="rhov">0.35</b></label>
-      <input type="range" id="rho" min="-0.30" max="0.95" step="0.05" value="0.35">
-      <p class="note">One number for every pair keeps the table small.
-      Correlation is what diversification is made of: at 1.0 the frontier is a
-      straight line and there is nothing to gain. Below &minus;1/(n&minus;1) no
-      set of assets could produce the matrix, so the slider stops there.</p>
-    </div>
-
-    <div class="slider">
-      <label for="rf">Risk-free rate <b id="rfv">2.00%</b></label>
-      <input type="range" id="rf" min="0" max="10" step="0.1" value="2">
-    </div>
-
-    <div class="slider">
-      <label for="aversion">Risk aversion (A) <b id="av">3.0</b></label>
-      <input type="range" id="aversion" min="1" max="10" step="0.5" value="3">
-      <p class="note">The A in U = E[r] &minus; (A/2)&sigma;&sup2;. Two to four
-      is the conventional range. It sets how much of the tangency portfolio you
-      hold, and nothing else.</p>
-    </div>
-  </div>
-
-  <div>
-    <h2>Result</h2>
-    <div class="stats" id="stats"></div>
+  <main>
+    <div class="tiles" id="stats"></div>
     <div id="alert"></div>
-    <p class="note" id="chartnote"></p>
-  </div>
+    <section class="glass card chartbox" id="chart"></section>
+    <p class="note" id="chartnote" style="margin:0 4px"></p>
+
+    <div class="split">
+      <section class="glass card" id="allocation"></section>
+      <section class="glass card" id="holdings"></section>
+    </div>
+
+    <section class="glass card" id="diag"></section>
+
+    <section class="glass card">
+      <h3>Every profile, side by side</h3>
+      <div class="tablebox"><table id="complete"></table></div>
+      <p class="note">Sharpe is identical down the column: moving along the
+      capital allocation line changes how much risk you carry, never how well
+      you are paid for carrying it. Only the cash weight differs.</p>
+      <details>
+        <summary>The geometry behind it</summary>
+        <div id="geom"></div>
+      </details>
+    </section>
+  </main>
 </div>
 
-<div class="card chartbox" id="chart"></div>
-
-<h2>Your portfolio against the frontier</h2>
-<div id="diag"></div>
-
-<h2>Reference portfolios</h2>
-<div class="card"><div class="tablebox"><table id="weights"></table></div></div>
-<p class="note" id="shortnote"></p>
-
-<div id="completewrap">
-  <h2>Your complete portfolio</h2>
-  <div class="card"><div class="tablebox">
-    <table id="complete"></table></div></div>
-  <p class="note">The Sharpe column is constant: moving along the capital
-  allocation line changes how much risk you carry, never how well you are paid
-  for carrying it. That is Tobin's two-fund separation &mdash; the risky mix is
-  the same for a cautious investor and an aggressive one, and only the cash
-  weight differs.</p>
-</div>
-
-<details>
-  <summary>The geometry behind it</summary>
-  <div id="geom"></div>
-</details>
-
-<footer id="foot"></footer>
+<footer class="glass" id="foot"></footer>
 </div>
 
 <script>
@@ -329,10 +397,49 @@ function diagnose(g,mu,S,rf,w,tan){
   return out;
 }
 
+// ----------------------------------------------- the investor's own words
+// Loss tolerances, not risk-aversion coefficients. Nobody knows their A;
+// people do know roughly how far a portfolio could fall before they would
+// sell. That is a VaR statement, and it inverts into a volatility budget.
+const RISK_PROFILES=[
+  {key:"conservative",label:"Conservative",loss:0.08,
+   note:"Capital preservation first."},
+  {key:"moderate",label:"Moderate",loss:0.15,
+   note:"Some growth, limited drawdown."},
+  {key:"balanced",label:"Balanced",loss:0.22,
+   note:"Long horizon, ordinary market risk."},
+  {key:"growth",label:"Growth",loss:0.32,
+   note:"Growth priority, able to sit through a deep fall."},
+  {key:"aggressive",label:"Aggressive",loss:0.45,
+   note:"Maximum long-run return, accepts severe falls."},
+];
+const Z95=-1.6448536269514722;          // normal 5% quantile
+
+// Solve the budget against the BLENDED portfolio, not the risky fund alone.
+// Holding cash cuts the expected return as well as the volatility, so sizing
+// on the tangency portfolio's own return overshoots the agreed loss — on the
+// conservative profile an 8% tolerance came out as an 11% bad year.
+//   r_c = rf + y(mu_t - rf),  sigma_c = y sigma_t,  S = (mu_t - rf)/sigma_t
+//   -(r_c + z sigma_c) = L   =>   sigma_c = (L + rf) / (|z| - S)
+function calVolForLoss(loss,rf,sharpe,z){
+  const d=Math.abs(z)-sharpe;
+  return d<=1e-9 ? null : (loss+rf)/d;
+}
+function forInvestor(loss,rf,tan,allowLeverage,z){
+  const budget=calVolForLoss(loss,rf,tan.sharpe,z);
+  if(budget===null) return null;
+  let y = tan.v>TOL ? budget/tan.v : 0;
+  const capped = !allowLeverage && y>1;
+  if(capped) y=1;
+  const r=rf+y*(tan.r-rf), v=Math.abs(y)*tan.v;
+  return {loss,budget,y,capped,r,v,
+          sharpe: v>TOL ? (r-rf)/v : NaN,
+          w: tan.w.map(x=>x*y), cash: 1-y,
+          impliedA: (y>TOL && tan.v>TOL) ? (tan.r-rf)/(y*tan.v*tan.v) : NaN,
+          delivered: -(r+z*v)};
+}
+
 // ---------------------------------------------------------------- state
-// The default holding is deliberately concentrated in the high-return,
-// high-volatility asset — the most common way a real book ends up inside the
-// frontier rather than on it.
 const DEFAULT=[
   {name:"Short bonds",   mu:4,  sd:10, w:10},
   {name:"Broad equity",  mu:8,  sd:18, w:20},
@@ -340,21 +447,30 @@ const DEFAULT=[
   {name:"Real assets",   mu:10, sd:22, w:10},
 ];
 let rows=DEFAULT.map(r=>Object.assign({},r));
+let profileKey="moderate";
 
 const $=s=>document.querySelector(s);
 // Guard the axis case where a tick sits a hair below zero and rounds to the
 // string "-0%", which reads as a defect.
 const pct=(x,d)=>{
   const k=d===undefined?2:d;
+  if(x===null||x===undefined||!isFinite(x)) return "—";
   const v=Math.abs(x)<0.5*Math.pow(10,-(k+2))?0:x;
   return (v*100).toFixed(k)+"%";
 };
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",
   ">":"&gt;",'"':"&quot;"}[c]));
 
+function drawProfiles(){
+  $("#profiles").innerHTML=RISK_PROFILES.map(p=>
+    '<button class="prof" type="button" data-p="'+p.key+'" aria-pressed="'+
+    (p.key===profileKey)+'"><span style="flex:1"><b>'+p.label+'</b>'+
+    '<em>'+p.note+'</em></span><span>&minus;'+(p.loss*100).toFixed(0)+
+    '%</span></button>').join("");
+}
+
 function drawAssets(){
-  const tb=$("#assets tbody");
-  tb.innerHTML=rows.map((r,i)=>
+  $("#assets tbody").innerHTML=rows.map((r,i)=>
     '<tr><td><input type="text" id="n'+i+'" data-i="'+i+'" data-k="name" '+
       'aria-label="Asset name" value="'+esc(r.name)+'"></td>'+
     '<td><input type="number" id="m'+i+'" step="0.5" data-i="'+i+'" '+
@@ -370,38 +486,35 @@ function drawAssets(){
 function render(){
   const n=rows.length;
   // A uniform correlation matrix is positive semi-definite only for
-  // rho >= -1/(n-1). Clamp the control rather than let the page compute
-  // weights for a covariance no set of assets could produce.
-  const floor=n>1?-1/(n-1):0;
+  // rho >= -1/(n-1). Round that floor UP to a multiple of the step so the
+  // slider's value grid stays on clean marks, and nudge once more where the
+  // rounded floor is exactly the boundary (singular, not merely valid).
+  const floor=n>1?-1/(n-1):0, STEP=0.05;
   const rhoEl=$("#rho");
-  // Round the floor UP to a multiple of the step, so the slider's value grid
-  // stays on clean 0.05 marks; otherwise a min of -0.32 shifts every stop and
-  // a nominal 0.35 lands on 0.33. Nudge once more when the rounded floor is
-  // exactly -1/(n-1), where the matrix is singular rather than merely valid.
-  const STEP=0.05;
   let lo=Math.ceil(floor/STEP)*STEP;
   if(lo<=floor+1e-12) lo+=STEP;
   rhoEl.min=lo.toFixed(2);
   if(+rhoEl.value<lo) rhoEl.value=lo.toFixed(2);
-  const rho=+rhoEl.value, rf=+$("#rf").value/100, A=+$("#aversion").value;
+
+  const rho=+rhoEl.value, rf=+$("#rf").value/100;
+  const loss=+$("#loss").value/100, lev=$("#lev").checked;
   $("#rhov").textContent=rho.toFixed(2);
   $("#rfv").textContent=pct(rf);
-  $("#av").textContent=A.toFixed(1);
+  $("#lossv").textContent=pct(loss,0);
 
   const mu=rows.map(r=>r.mu/100), sd=rows.map(r=>r.sd/100);
   const S=sd.map((a,i)=>sd.map((b,j)=>a*b*(i===j?1:rho)));
   const g=geometry(mu,S);
 
   if(!g){
-    $("#stats").innerHTML="";
-    $("#alert").innerHTML='<div class="warn"><b>No frontier to trace.</b>'+
-      'Either the covariance is singular, or every asset has the same '+
-      'expected return &mdash; in which case every portfolio has the same '+
+    $("#stats").innerHTML="";$("#chart").innerHTML="";
+    $("#allocation").innerHTML="";$("#holdings").innerHTML="";
+    $("#diag").innerHTML="";$("#complete").innerHTML="";$("#geom").innerHTML="";
+    $("#alert").innerHTML='<div class="glass card warnbox"><b>No frontier to '+
+      'trace.</b>Either the covariance is singular, or every asset has the '+
+      'same expected return — in which case every portfolio has the same '+
       'expected return and the frontier collapses to a point. Vary the '+
       'returns.</div>';
-    $("#chart").innerHTML="";$("#weights").innerHTML="";
-    $("#completewrap").hidden=true;$("#geom").innerHTML="";
-    $("#diag").innerHTML="";
     return;
   }
 
@@ -412,123 +525,208 @@ function render(){
   const dg=diagnose(g,mu,S,rf,held,tan);
   $("#cashw").textContent=pct(dg.cash,0);
 
-  $("#stats").innerHTML=
-    stat("Min-variance return",pct(g.gmvReturn),"B/A")+
-    stat("Min-variance volatility",pct(g.gmvVol),"&radic;(1/A)")+
-    stat("Tangency return",tan?pct(tan.r):"&mdash;",
-         tan?pct(tan.v)+" vol":"none exists")+
-    stat("Best Sharpe ratio",tan?tan.sharpe.toFixed(3):"&mdash;",
-         tan?("+"+(tan.sharpe-gmv.sharpe).toFixed(3)+" vs min-variance")
-            :("supremum "+g.asymptote.toFixed(3)));
+  const alloc = tan ? forInvestor(loss,rf,tan,lev,Z95) : null;
 
-  $("#alert").innerHTML = tan ? "" :
-    '<div class="warn"><b>No tangency portfolio exists at a '+pct(rf)+
-    ' risk-free rate.</b>The minimum-variance portfolio returns '+
-    pct(g.gmvReturn)+', which is at or below the risk-free rate, so no line '+
-    'from '+pct(rf)+' ever touches the efficient branch. The Sharpe ratio '+
-    'rises along the frontier toward '+g.asymptote.toFixed(3)+' &mdash; the '+
-    'slope of the hyperbola&rsquo;s asymptote &mdash; without ever reaching '+
-    'it, so the maximum is a limit rather than a portfolio. This is not a '+
-    'numerical failure: it is the honest answer when the assumed returns do '+
-    'not compensate for the assumed risk, and lending at '+pct(rf)+
-    ' dominates. Lower the risk-free rate or raise an expected return to see '+
-    'the line.</div>';
+  if(!tan){
+    $("#alert").innerHTML='<div class="glass card warnbox"><b>No tangency '+
+      'portfolio exists at a '+pct(rf)+' risk-free rate.</b>The '+
+      'minimum-variance portfolio returns '+pct(g.gmvReturn)+', at or below '+
+      'the risk-free rate, so no line from '+pct(rf)+' ever touches the '+
+      'efficient branch. The Sharpe ratio climbs toward '+
+      g.asymptote.toFixed(3)+' — the asymptote of the hyperbola — '+
+      'without reaching it, so the maximum is a limit rather than a '+
+      'portfolio. Lending at '+pct(rf)+' dominates every risky mix here. '+
+      'Lower the risk-free rate or raise an expected return.</div>';
+  } else if(alloc && alloc.capped){
+    $("#alert").innerHTML='<div class="glass card warnbox"><b>Fully invested, '+
+      'and still short of the target.</b>A '+pct(loss,0)+' tolerance would '+
+      'support '+pct(alloc.budget)+' of volatility, more than an unlevered '+
+      'book of these assets can carry ('+pct(tan.v)+'). The allocation is '+
+      'capped at 100% invested, so the bad year works out nearer '+
+      pct(alloc.delivered)+'. Tick borrowing to reach the target, or accept '+
+      'the lower risk.</div>';
+  } else {
+    $("#alert").innerHTML="";
+  }
 
-  drawChart(g,gmv,tan,curve,mu,sd,rf,dg);
+  drawStats(alloc,tan,gmv,loss);
+  drawChart(g,gmv,tan,curve,mu,sd,rf,dg,alloc);
+  drawAllocation(alloc,rf,loss,lev);
+  drawHoldings(dg,alloc);
   drawDiagnosis(dg,rf);
-  drawWeights(g,gmv,tan,mu,S,rf);
-  drawComplete(tan,rf,A);
+  drawLadder(tan,rf,lev);
   drawGeom(g,rf,S);
+  $("#profnote").textContent = alloc
+    ? "At " + pct(loss,0) + ", a one-in-twenty year. Implied risk aversion A = "
+      + (isFinite(alloc.impliedA)?alloc.impliedA.toFixed(2):"—") + "."
+    : "";
+}
+
+const tile=(label,value,chip,cls)=>
+  '<div class="stat glass"><span>'+label+'</span><b>'+value+'</b>'+
+  (chip?'<i class="chip '+(cls||"")+'" style="font-style:normal">'+chip+
+   '</i>':'')+'</div>';
+
+function drawStats(a,tan,gmv,loss){
+  if(!a){
+    $("#stats").innerHTML=
+      tile("Expected return","—")+tile("Volatility","—")+
+      tile("Sharpe ratio","—")+tile("Bad year","—");
+    return;
+  }
+  const miss=Math.abs(a.delivered-a.loss)>1e-6;
+  $("#stats").innerHTML=
+    tile("Expected return",pct(a.r),
+         (a.r-gmv.r>0?"+":"")+pct(a.r-gmv.r)+" vs min-variance",
+         a.r>=gmv.r?"good":"bad")+
+    tile("Volatility",pct(a.v),
+         a.capped?"capped at fully invested":"budget "+pct(a.budget),
+         a.capped?"warn":"")+
+    tile("Sharpe ratio",a.sharpe.toFixed(3),
+         "best available "+tan.sharpe.toFixed(3),"good")+
+    tile("Bad year (1 in 20)","−"+pct(a.delivered),
+         miss?"you asked for "+pct(a.loss,0):"exactly what you asked for",
+         miss?"warn":"good");
+}
+
+function drawAllocation(a,rf,loss,lev){
+  if(!a){$("#allocation").innerHTML="";return;}
+  const y=a.y, cash=a.cash;
+  const risky=Math.min(Math.max(y,0),1), levered=Math.max(y-1,0);
+  const cashPct=Math.max(cash,0);
+  const total=risky+levered+cashPct || 1;
+  let h='<h3>Your allocation</h3>'+
+    '<div class="alloc">'+
+    '<i class="risky" style="width:'+(risky/total*100).toFixed(1)+'%"></i>'+
+    (levered>0?'<i class="lev" style="width:'+(levered/total*100).toFixed(1)+
+      '%"></i>':'')+
+    (cashPct>0?'<i class="cash" style="width:'+(cashPct/total*100).toFixed(1)+
+      '%"></i>':'')+
+    '</div><div class="legend">'+
+    '<span><s class="risky" style="background:var(--accent)"></s>'+
+    pct(Math.min(y,1),1)+' risky</span>'+
+    (levered>0?'<span><s style="background:var(--held)"></s>'+pct(levered,1)+
+      ' borrowed</span>':'')+
+    (cashPct>0?'<span><s style="background:var(--dash)"></s>'+pct(cashPct,1)+
+      ' cash at '+pct(rf)+'</span>':'')+
+    '</div>';
+  h+='<div class="tablebox" style="margin-top:12px"><table id="weights">'+
+     '<thead><tr><th>Asset</th><th>Weight</th></tr></thead><tbody>';
+  rows.forEach((r,i)=>{
+    const v=a.w[i];
+    h+='<tr><td>'+esc(r.name)+'</td><td class="'+(v<0?"neg":"")+'">'+
+       pct(v,1)+'</td></tr>';
+  });
+  h+='<tr><td><b>Gross exposure</b></td><td><b>'+
+     a.w.reduce((s,x)=>s+Math.abs(x),0).toFixed(2)+'&times;</b></td></tr>'+
+     '</tbody></table></div>';
+  h+='<p class="note">Every investor here holds the same risky mix and '+
+     'differs only in how much of it they hold. That is Tobin’s '+
+     'two-fund separation: your risk tolerance sets the cash weight, not the '+
+     'stock picks.</p>';
+  $("#allocation").innerHTML=h;
+}
+
+function drawHoldings(d,a){
+  let h='<h3>What you hold today</h3>';
+  h+='<div class="tablebox"><table><thead><tr><th>Asset</th>'+
+     '<th>You hold</th>'+(a?'<th>Target</th><th>Trade</th>':'')+
+     '</tr></thead><tbody>';
+  rows.forEach((r,i)=>{
+    const cur=d.w[i];
+    h+='<tr><td>'+esc(r.name)+'</td><td>'+pct(cur,1)+'</td>';
+    if(a){
+      const t=a.w[i]-cur;
+      h+='<td>'+pct(a.w[i],1)+'</td><td class="'+(t<0?"neg":t>0?"pos":"")+
+         '">'+(t>=0?"+":"")+pct(t,1)+'</td>';
+    }
+    h+='</tr>';
+  });
+  const tc=a?a.cash-d.cash:0;
+  h+='<tr><td><b>Cash</b></td><td>'+pct(d.cash,1)+'</td>'+
+     (a?'<td>'+pct(a.cash,1)+'</td><td class="'+(tc<0?"neg":tc>0?"pos":"")+
+        '">'+(tc>=0?"+":"")+pct(tc,1)+'</td>':'')+'</tr>';
+  h+='</tbody></table></div>';
+  h+='<p class="note">The target column is the risky mix scaled to your '+
+     'risk profile. Trades move you onto the capital allocation line at the '+
+     'risk level you chose.</p>';
+  $("#holdings").innerHTML=h;
 }
 
 function drawDiagnosis(d,rf){
-  const names=rows.map(r=>esc(r.name));
   const onFrontier = d.returnGap!==null && d.returnGap<=1e-4;
   const onCal = d.sharpeGap!==null && d.sharpeGap<=1e-4;
-
-  let verdict, pill;
+  let verdict,chip;
   if(d.returnGap===null){
     verdict="Below the minimum-variance volatility";
-    pill='<span class="pill">cash position</span>';
-  } else if(onFrontier && onCal){
-    verdict="On the frontier, and on the capital allocation line";
-    pill='<span class="pill on">efficient</span>';
+    chip='<span class="chip">cash position</span>';
+  } else if(onFrontier&&onCal){
+    verdict="On the frontier and on the line";
+    chip='<span class="chip good">efficient</span>';
   } else if(onFrontier){
     verdict="On the efficient frontier";
-    pill='<span class="pill on">efficient</span>';
+    chip='<span class="chip good">efficient</span>';
   } else {
     verdict="Inside the frontier";
-    pill='<span class="pill off">not efficient</span>';
+    chip='<span class="chip warn">not efficient</span>';
   }
-
-  let h='<div class="card">'+
-    '<div class="verdict">'+verdict+pill+'</div>'+
-    '<p class="note" style="margin:0">Holding '+pct(d.r)+' expected return '+
-    'at '+pct(d.v)+' volatility, Sharpe '+(d.sharpe===d.sharpe?
-      d.sharpe.toFixed(3):"&mdash;")+
+  let h='<h3>'+verdict+' '+chip+'</h3>'+
+    '<p class="note" style="margin-top:0">Your current book returns '+
+    pct(d.r)+' at '+pct(d.v)+' volatility, Sharpe '+
+    (d.sharpe===d.sharpe?d.sharpe.toFixed(3):"—")+
     (Math.abs(d.cash)>1e-9?', with '+pct(d.cash,1)+' in cash':'')+'.</p>'+
-    '<div class="gaps">'+
-      gapTile(d.returnGap===null?null:d.returnGap,
-        "Return given up",
-        d.returnGap===null?"no frontier portfolio reaches this volatility":
-          "at the same "+pct(d.v)+" risk the frontier pays "+
-          pct(d.frontierReturn))+
-      gapTile(d.volGap,"Volatility carried for nothing",
-        "the same "+pct(d.r)+" return is available at "+
-        pct(d.frontierVol))+
-      gapTile(d.calGap,"Below the CAL",
-        d.sharpeGap===null?"no tangency portfolio exists at this rate":
-          "Sharpe shortfall "+d.sharpeGap.toFixed(3)+" against "+
-          (d.sharpe+d.sharpeGap).toFixed(3))+
+    '<div class="tiles" style="margin-top:12px">'+
+    gapTile(d.returnGap,"Return given up",
+      d.returnGap===null?"no frontier portfolio reaches this volatility":
+      "at the same "+pct(d.v)+" risk the frontier pays "+
+      pct(d.frontierReturn))+
+    gapTile(d.volGap,"Volatility for nothing",
+      "the same "+pct(d.r)+" return is available at "+pct(d.frontierVol))+
+    gapTile(d.calGap,"Below the CAL",
+      d.sharpeGap===null?"no tangency portfolio at this rate":
+      "Sharpe shortfall "+d.sharpeGap.toFixed(3))+
     '</div>';
-
-  if(d.returnGap!==null && !onFrontier){
-    h+='<p class="note">The first two numbers measure the same inefficiency '+
-       'in different units, and both are real: at this risk level the mix '+
-       'earns less than it could, and the return it does earn could be had '+
-       'with less risk. Neither is a forecast &mdash; they follow from the '+
-       'returns and volatilities in the table above.</p>';
-  }
-  h+='</div>';
-
-  if(d.calW){
-    h+='<h2 style="font-size:16px">Getting onto the line</h2>'+
-      '<div class="card"><div class="tablebox"><table><thead><tr>'+
-      '<th>Asset</th><th>You hold</th><th>On the CAL</th><th>Trade</th>'+
-      '</tr></thead><tbody>';
-    names.forEach((nm,i)=>{
-      const t=d.calW[i]-d.w[i];
-      h+='<tr><td>'+nm+'</td><td>'+pct(d.w[i],1)+'</td><td>'+
-         pct(d.calW[i],1)+'</td><td class="'+(t<0?"neg":t>0?"pos":"")+'">'+
-         (t>=0?"+":"")+pct(t,1)+'</td></tr>';
-    });
-    const tc=d.calCash-d.cash;
-    h+='<tr><td><b>Cash</b></td><td>'+pct(d.cash,1)+'</td><td>'+
-       pct(d.calCash,1)+'</td><td class="'+(tc<0?"neg":tc>0?"pos":"")+'">'+
-       (tc>=0?"+":"")+pct(tc,1)+'</td></tr></tbody></table></div>';
-    h+='<p class="note">This column holds the tangency portfolio scaled to '+
-       'the volatility you already carry, so it changes what you own without '+
-       'changing how much risk you run'+(onCal?
-         ' &mdash; and you are already there.':
-         '. Every other route to the frontier either raises your risk or '+
-         'lowers your return.')+'</p></div>';
+  if(d.returnGap!==null&&!onFrontier){
+    h+='<p class="note">The first two measure one inefficiency in two units '+
+       'and both are real: at this risk the mix earns less than it could, '+
+       'and the return it does earn could be had with less risk. Neither is '+
+       'a forecast — they follow from the table on the left.</p>';
   }
   $("#diag").innerHTML=h;
 }
 const gapTile=(v,label,sub)=>
-  '<div class="gap"><b'+(v!==null&&v>1e-4?' style="color:var(--held)"':'')+
-  '>'+(v===null?"&mdash;":pct(v))+'</b><span>'+label+'</span>'+
-  '<span style="font-size:11.5px">'+sub+'</span></div>';
-const stat=(label,value,sub)=>
-  '<div class="stat"><span>'+label+'</span><b>'+value+'</b><i>'+
-  (sub||"")+'</i></div>';
+  '<div class="stat" style="padding:12px 14px;background:var(--accent-soft);'+
+  'border-radius:14px"><span>'+label+'</span><b style="font-size:21px'+
+  ((v!==null&&v>1e-4)?';color:var(--held)':'')+'">'+
+  (v===null?"—":pct(v))+'</b><i class="chip" style="font-style:normal">'+
+  sub+'</i></div>';
 
-function drawChart(g,gmv,tan,curve,mu,sd,rf,dg){
-  const W=1120,H=460,L=64,R=W-24,T=20,B=H-48;
-  const vmax=Math.max(...curve.map(p=>p.v),...sd,tan?tan.v:0,dg?dg.v:0)*1.12;
+function drawLadder(tan,rf,lev){
+  if(!tan){$("#complete").innerHTML="";return;}
+  let h='<thead><tr><th>Profile</th><th>Bad year</th><th>In risky</th>'+
+        '<th>Cash</th><th>E[r]</th><th>Vol</th><th>Sharpe</th></tr></thead>'+
+        '<tbody>';
+  RISK_PROFILES.forEach(p=>{
+    const a=forInvestor(p.loss,rf,tan,lev,Z95);
+    if(!a) return;
+    h+='<tr'+(p.key===profileKey?' style="font-weight:600"':'')+'><td>'+
+       p.label+(a.capped?' <span class="chip warn">capped</span>':'')+
+       '</td><td>&minus;'+pct(a.delivered,1)+'</td><td>'+
+       pct(Math.min(a.y,999),1)+'</td><td class="'+(a.cash<0?"neg":"")+'">'+
+       pct(a.cash,1)+'</td><td>'+pct(a.r)+'</td><td>'+pct(a.v)+'</td><td>'+
+       (isFinite(a.sharpe)?a.sharpe.toFixed(3):"—")+'</td></tr>';
+  });
+  $("#complete").innerHTML=h+'</tbody>';
+}
+
+function drawChart(g,gmv,tan,curve,mu,sd,rf,dg,alloc){
+  const W=1120,H=440,L=62,R=W-24,T=20,B=H-46;
+  const vmax=Math.max(...curve.map(p=>p.v),...sd,tan?tan.v:0,dg?dg.v:0,
+                      alloc?alloc.v:0)*1.12;
   const rs=curve.map(p=>p.r).concat(mu);
   if(tan) rs.push(tan.r);
-  if(dg) rs.push(dg.r, dg.calReturn===null?dg.r:dg.calReturn);
+  if(dg) rs.push(dg.r);
+  if(alloc) rs.push(alloc.r);
   let rmin=Math.min(...rs,rf),rmax=Math.max(...rs,rf);
   const pad=(rmax-rmin)*0.12||0.02; rmin-=pad; rmax+=pad;
   const x=v=>L+(v/vmax)*(R-L), y=r=>B-((r-rmin)/(rmax-rmin))*(B-T);
@@ -538,159 +736,114 @@ function drawChart(g,gmv,tan,curve,mu,sd,rf,dg){
   const eff=curve.filter(p=>p.efficient), low=curve.filter(p=>!p.efficient);
 
   let s='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Efficient '+
-    'frontier and capital allocation line" font-size="12.5">';
+    'frontier, capital allocation line and your allocation" font-size="12.5">';
   ticks(rmin,rmax,4).forEach(t=>{
     s+='<line x1="'+L+'" x2="'+R+'" y1="'+y(t).toFixed(1)+'" y2="'+
-       y(t).toFixed(1)+'" stroke="var(--line)"/>'+
-       '<text x="'+(L-8)+'" y="'+(y(t)+4).toFixed(1)+
-       '" text-anchor="end" fill="var(--muted)">'+pct(t,0)+'</text>';
+       y(t).toFixed(1)+'" stroke="var(--border)"/>'+
+       '<text x="'+(L-8)+'" y="'+(y(t)+4).toFixed(1)+'" text-anchor="end" '+
+       'fill="var(--faint)">'+pct(t,0)+'</text>';
   });
   ticks(0,vmax,4).forEach(t=>{
-    s+='<text x="'+x(t).toFixed(1)+'" y="'+(B+18)+
-       '" text-anchor="middle" fill="var(--muted)">'+pct(t,0)+'</text>';
+    s+='<text x="'+x(t).toFixed(1)+'" y="'+(B+18)+'" text-anchor="middle" '+
+       'fill="var(--faint)">'+pct(t,0)+'</text>';
   });
-  s+='<line x1="'+L+'" x2="'+R+'" y1="'+B+'" y2="'+B+'" stroke="var(--line)"/>';
-  s+='<text x="'+((L+R)/2)+'" y="'+(B+38)+'" text-anchor="middle" '+
-     'fill="var(--muted)">Volatility (annual &sigma;)</text>';
-  s+='<text x="'+L+'" y="'+(T-2)+'" fill="var(--muted)">Expected return</text>';
+  s+='<line x1="'+L+'" x2="'+R+'" y1="'+B+'" y2="'+B+
+     '" stroke="var(--border)"/>';
+  s+='<text x="'+((L+R)/2)+'" y="'+(B+37)+'" text-anchor="middle" '+
+     'fill="var(--faint)">Volatility (annual &sigma;)</text>';
+  s+='<text x="'+L+'" y="'+(T-3)+'" fill="var(--faint)">Expected return</text>';
   if(low.length) s+='<polyline points="'+path(low)+'" fill="none" '+
     'stroke="var(--dash)" stroke-width="2" stroke-dasharray="5 4"/>';
   s+='<polyline points="'+path(eff)+'" fill="none" stroke="var(--curve)" '+
      'stroke-width="2.5"/>';
   if(tan){
-    const vEnd=vmax, rEnd=rf+tan.sharpe*vEnd;
-    s+='<line x1="'+x(0)+'" y1="'+y(rf).toFixed(1)+'" x2="'+x(vEnd).toFixed(1)+
+    const rEnd=rf+tan.sharpe*vmax;
+    s+='<line x1="'+x(0)+'" y1="'+y(rf).toFixed(1)+'" x2="'+x(vmax).toFixed(1)+
        '" y2="'+y(rEnd).toFixed(1)+'" stroke="var(--cal)" stroke-width="2.5"/>';
-    s+=mark(x(tan.v),y(tan.r),6,"var(--cal)","Tangency "+pct(tan.r)+" / "+
+    s+=mark(x(tan.v),y(tan.r),5,"var(--cal)","Tangency "+pct(tan.r)+" / "+
             pct(tan.v));
-    s+='<text x="'+(x(tan.v)-12).toFixed(1)+'" y="'+(y(tan.r)-14).toFixed(1)+
-       '" text-anchor="end" fill="var(--cal)">Tangency</text>';
-    s+=mark(x(0),y(rf),4,"var(--muted)","Risk-free "+pct(rf));
-    s+='<text x="'+(x(0)+9).toFixed(1)+'" y="'+(y(rf)+18).toFixed(1)+
-       '" fill="var(--muted)">Risk-free '+pct(rf)+'</text>';
+    s+=mark(x(0),y(rf),4,"var(--faint)","Risk-free "+pct(rf));
+    s+='<text x="'+(x(0)+9).toFixed(1)+'" y="'+(y(rf)+17).toFixed(1)+
+       '" fill="var(--faint)">Risk-free '+pct(rf)+'</text>';
   }
-  s+=mark(x(gmv.v),y(gmv.r),5,"var(--curve)","Minimum variance "+pct(gmv.r)+
-          " / "+pct(gmv.v));
-  s+='<text x="'+(x(gmv.v)-10).toFixed(1)+'" y="'+(y(gmv.r)+20).toFixed(1)+
-     '" text-anchor="end" fill="var(--ink)">Minimum variance</text>';
+  s+=mark(x(gmv.v),y(gmv.r),4.5,"var(--curve)","Minimum variance "+
+          pct(gmv.r)+" / "+pct(gmv.v));
+  s+='<text x="'+(x(gmv.v)-9).toFixed(1)+'" y="'+(y(gmv.r)+19).toFixed(1)+
+     '" text-anchor="end" fill="var(--muted)">Minimum variance</text>';
   rows.forEach((row,i)=>{
     s+=mark(x(sd[i]),y(mu[i]),3.5,"var(--dash)",esc(row.name)+" "+
             pct(mu[i])+" / "+pct(sd[i]));
     s+='<text x="'+(x(sd[i])+8).toFixed(1)+'" y="'+(y(mu[i])+4).toFixed(1)+
-       '" fill="var(--muted)">'+esc(row.name)+'</text>';
+       '" fill="var(--faint)" font-size="11.5">'+esc(row.name)+'</text>';
   });
-  // The held portfolio, with the vertical gap to whatever is available at the
-  // same volatility drawn as a dropped line — the distance IS the cost.
-  if(dg && isFinite(dg.v)){
+  // The held book, with the drop to whatever is available at the same risk.
+  if(dg&&isFinite(dg.v)){
     const top = dg.calReturn!==null ? dg.calReturn
               : (dg.frontierReturn!==null ? dg.frontierReturn : null);
-    if(top!==null && top>dg.r+1e-6){
-      s+='<line x1="'+x(dg.v).toFixed(1)+'" y1="'+y(dg.r).toFixed(1)+
-         '" x2="'+x(dg.v).toFixed(1)+'" y2="'+y(top).toFixed(1)+
+    if(top!==null&&top>dg.r+1e-6){
+      s+='<line x1="'+x(dg.v).toFixed(1)+'" y1="'+y(dg.r).toFixed(1)+'" x2="'+
+         x(dg.v).toFixed(1)+'" y2="'+y(top).toFixed(1)+
          '" stroke="var(--held)" stroke-width="1.5" stroke-dasharray="3 3"/>';
       s+='<text x="'+(x(dg.v)+9).toFixed(1)+'" y="'+
          ((y(dg.r)+y(top))/2+4).toFixed(1)+'" fill="var(--held)">'+
          pct(top-dg.r)+' forgone</text>';
     }
-    s+=mark(x(dg.v),y(dg.r),6,"var(--held)","Your portfolio "+pct(dg.r)+
-            " / "+pct(dg.v));
+    s+=mark(x(dg.v),y(dg.r),6,"var(--held)","What you hold "+pct(dg.r)+" / "+
+            pct(dg.v));
     s+='<text x="'+(x(dg.v)-12).toFixed(1)+'" y="'+(y(dg.r)+18).toFixed(1)+
-       '" text-anchor="end" fill="var(--held)">Your portfolio</text>';
+       '" text-anchor="end" fill="var(--held)">You hold</text>';
+  }
+  // Where the chosen risk profile lands on the line.
+  if(alloc){
+    s+='<circle cx="'+x(alloc.v).toFixed(1)+'" cy="'+y(alloc.r).toFixed(1)+
+       '" r="10" fill="none" stroke="var(--accent)" stroke-width="1.5" '+
+       'opacity="0.55"/>';
+    s+=mark(x(alloc.v),y(alloc.r),6,"var(--accent)","Your profile "+
+            pct(alloc.r)+" / "+pct(alloc.v));
+    s+='<text x="'+(x(alloc.v)).toFixed(1)+'" y="'+(y(alloc.r)-17).toFixed(1)+
+       '" text-anchor="middle" fill="var(--accent)" font-weight="600">'+
+       'Your target</text>';
   }
   s+='</svg>';
   $("#chart").innerHTML=s;
-  $("#chartnote").innerHTML="Solid is the efficient branch; dashed is the "+
-    "lower branch of the same hyperbola, where every portfolio is beaten by "+
-    "one directly above it at identical risk."+(tan?" The straight line is "+
-    "the capital allocation line: it lies above the frontier everywhere "+
-    "except the single point of contact, which is the whole argument for "+
-    "holding cash or leverage alongside one risky mix rather than picking a "+
-    "frontier portfolio directly.":"");
+  $("#chartnote").innerHTML="Solid grey is the efficient branch; dashed is "+
+    "the dominated lower branch of the same hyperbola. The blue line is the "+
+    "capital allocation line — it beats every frontier portfolio except "+
+    "the one it touches."+(alloc?" The ringed point is where your risk "+
+    "profile puts you on it.":"");
 }
 const mark=(cx,cy,r,fill,title)=>
   '<circle cx="'+cx.toFixed(1)+'" cy="'+cy.toFixed(1)+'" r="'+r+'" fill="'+
   fill+'"><title>'+title+'</title></circle>';
 
-function drawWeights(g,gmv,tan,mu,S,rf){
-  const names=rows.map(r=>esc(r.name));
-  const cols=[["Minimum variance",gmv.w]];
-  if(tan) cols.push(["Tangency",tan.w]);
-  let h='<thead><tr><th>Asset</th>'+cols.map(c=>'<th>'+c[0]+'</th>').join("")+
-        '</tr></thead><tbody>';
-  names.forEach((nm,i)=>{
-    h+='<tr><td>'+nm+'</td>'+cols.map(c=>{
-      const v=c[1][i];
-      return '<td class="'+(v<0?"neg":"")+'">'+pct(v,1)+'</td>';
-    }).join("")+'</tr>';
-  });
-  h+='<tr><td><b>Gross exposure</b></td>'+cols.map(c=>'<td><b>'+
-     c[1].reduce((s,x)=>s+Math.abs(x),0).toFixed(2)+'&times;</b></td>').join("")+
-     '</tr></tbody>';
-  $("#weights").innerHTML=h;
-  const anyShort=cols.some(c=>c[1].some(v=>v<-1e-6));
-  $("#shortnote").innerHTML=anyShort?"Negative weights are short positions. "+
-    "Unconstrained mean-variance optimisation produces them freely, and they "+
-    "are the main reason textbook Markowitz weights are rarely implementable "+
-    "as they stand — gross exposure well above 1.0&times; is the "+
-    "optimiser taking estimated returns literally.":"";
-}
-
-function drawComplete(tan,rf,A){
-  const wrap=$("#completewrap");
-  if(!tan){wrap.hidden=true;return;}
-  wrap.hidden=false;
-  const ladder=[1.5,2,3,5,8];
-  if(ladder.indexOf(A)<0) ladder.push(A);
-  ladder.sort((a,b)=>a-b);
-  let h='<thead><tr><th>Risk aversion</th><th>In tangency</th>'+
-        '<th>At risk-free</th><th>Expected return</th><th>Volatility</th>'+
-        '<th>Sharpe</th></tr></thead><tbody>';
-  ladder.forEach(a=>{
-    const y=(tan.r-rf)/(a*tan.v*tan.v);
-    const r=rf+y*(tan.r-rf), v=Math.abs(y)*tan.v;
-    h+='<tr'+(a===A?' style="font-weight:600"':'')+'><td>'+a.toFixed(1)+
-       '</td><td>'+pct(y,1)+'</td><td class="'+((1-y)<0?"neg":"")+'">'+
-       pct(1-y,1)+'</td><td>'+pct(r)+'</td><td>'+pct(v)+'</td><td>'+
-       ((r-rf)/v).toFixed(3)+'</td></tr>';
-  });
-  $("#complete").innerHTML=h+'</tbody>';
-}
-
 function drawGeom(g,rf,S){
   const cond=conditionNumber(S);
   $("#geom").innerHTML=
-    '<p class="note">The whole frontier reduces to four numbers computed from '+
-    'the expected returns &mu; and the covariance &Sigma;:</p>'+
-    '<div class="card tablebox" style="margin-top:8px"><table><thead><tr>'+
-    '<th></th><th></th><th>Value</th></tr></thead><tbody>'+
+    '<p class="note">The whole frontier reduces to four numbers computed '+
+    'from the expected returns &mu; and the covariance &Sigma;:</p>'+
+    '<div class="tablebox"><table><tbody>'+
     grow("A","1&prime;&Sigma;&#8315;&sup1;1",g.a)+
     grow("B","1&prime;&Sigma;&#8315;&sup1;&mu;",g.b)+
     grow("C","&mu;&prime;&Sigma;&#8315;&sup1;&mu;",g.c)+
     grow("D","AC &minus; B&sup2;",g.d)+
     '</tbody></table></div>'+
-    '<p class="note">Everything else follows. The frontier is the hyperbola '+
-    '&sigma;&sup2;(r) = (A r&sup2; &minus; 2B r + C) / D. Its vertex &mdash; '+
-    'the minimum-variance portfolio &mdash; sits at return B/A = '+
-    pct(g.gmvReturn)+' and volatility &radic;(1/A) = '+pct(g.gmvVol)+
-    '. Returns above B/A are efficient; returns below it are the dominated '+
-    'branch drawn dashed.</p>'+
-    '<p class="note">The highest Sharpe ratio available from these assets is '+
-    '&radic;(C &minus; 2&middot;r<sub>f</sub>&middot;B + r<sub>f</sub>&sup2;'+
-    '&middot;A) = '+maxSharpe(g,rf).toFixed(3)+', attained at the tangency '+
-    'portfolio provided r<sub>f</sub> &lt; B/A. As expected return grows the '+
-    'frontier flattens toward an asymptote of slope &radic;(D/A) = '+
-    g.asymptote.toFixed(3)+', which is why a risk-free rate at or above '+
-    pct(g.gmvReturn)+' leaves the problem with a supremum and no '+
-    'maximiser.</p>'+
-    '<p class="note">&Sigma; is inverted to get any of this, so its condition '+
-    'number &mdash; <b>'+cond.toLocaleString(undefined,
-      {maximumFractionDigits:0})+'</b> here &mdash; is roughly the factor by '+
-    'which errors in &mu; are amplified in the weights. On real data that '+
-    'number runs into the tens of thousands, which is the practical case for '+
-    'shrinkage estimators and for long-only constraints.</p>';
+    '<p class="note">The frontier is the hyperbola &sigma;&sup2;(r) = '+
+    '(A r&sup2; &minus; 2B r + C) / D, with its vertex &mdash; the '+
+    'minimum-variance portfolio &mdash; at B/A = '+pct(g.gmvReturn)+' and '+
+    '&radic;(1/A) = '+pct(g.gmvVol)+'. The best Sharpe ratio available is '+
+    '&radic;(C &minus; 2 r<sub>f</sub> B + r<sub>f</sub>&sup2; A) = '+
+    maxSharpe(g,rf).toFixed(3)+', reached at the tangency portfolio when '+
+    'r<sub>f</sub> &lt; B/A. As return grows the frontier flattens toward a '+
+    'slope of &radic;(D/A) = '+g.asymptote.toFixed(3)+'.</p>'+
+    '<p class="note">&Sigma; has to be inverted for any of this, so its '+
+    'condition number — <b>'+cond.toLocaleString(undefined,
+      {maximumFractionDigits:0})+'</b> here — is roughly the factor by '+
+    'which errors in &mu; are amplified in the weights. On real S&amp;P 500 '+
+    'data it runs to 53,000 before shrinkage and 53 after, which is the '+
+    'practical case for a shrinkage estimator.</p>';
 }
-const grow=(k,f,v)=>'<tr><td><code>'+k+'</code></td><td>'+f+
-  '</td><td>'+v.toLocaleString(undefined,{maximumFractionDigits:3})+'</td></tr>';
+const grow=(k,f,v)=>'<tr><td><code>'+k+'</code></td><td>'+f+'</td><td>'+
+  v.toLocaleString(undefined,{maximumFractionDigits:3})+'</td></tr>';
 
 // Condition number via the symmetric eigenvalues, by Jacobi rotation. Small
 // n, so clarity beats speed.
@@ -721,6 +874,22 @@ function conditionNumber(S){
 }
 
 // ---------------------------------------------------------------- wiring
+$("#profiles").addEventListener("click",e=>{
+  const b=e.target.closest("[data-p]");
+  if(!b) return;
+  profileKey=b.dataset.p;
+  const p=RISK_PROFILES.find(x=>x.key===profileKey);
+  if(p) $("#loss").value=Math.round(p.loss*100);
+  drawProfiles(); render();
+});
+$("#loss").addEventListener("input",()=>{
+  // Dragging the slider puts you between the named profiles, so stop
+  // claiming one of them is selected unless the number still matches.
+  const v=+$("#loss").value/100;
+  const hit=RISK_PROFILES.find(p=>Math.abs(p.loss-v)<1e-9);
+  profileKey=hit?hit.key:"custom";
+  drawProfiles(); render();
+});
 $("#assets").addEventListener("input",e=>{
   const i=+e.target.dataset.i, k=e.target.dataset.k;
   if(k===undefined) return;
@@ -738,26 +907,25 @@ $("#add").addEventListener("click",()=>{
 });
 $("#reset").addEventListener("click",()=>{
   rows=DEFAULT.map(r=>Object.assign({},r));
-  $("#rho").value=0.35; $("#rf").value=2; $("#aversion").value=3;
-  drawAssets(); render();
+  profileKey="moderate";
+  $("#rho").value=0.35; $("#rf").value=2; $("#loss").value=15;
+  $("#lev").checked=false;
+  drawProfiles(); drawAssets(); render();
 });
-["rho","rf","aversion"].forEach(id=>
-  $("#"+id).addEventListener("input",render));
+["rho","rf"].forEach(id=>$("#"+id).addEventListener("input",render));
+$("#lev").addEventListener("change",render);
 
 // The site build carries its own theme toggle; the Artifact build does not,
 // because there the host sets data-theme and a second control would fight it.
 (function(){
   const btn=$("#theme");
   if(!btn) return;
-  // A per-viewer convenience. It can throw in a private window or with site
-  // data blocked, so every access is guarded and the page renders without it.
   let saved=null;
   try{saved=localStorage.getItem("fm-theme");}catch(e){}
   if(saved) document.documentElement.setAttribute("data-theme",saved);
   btn.addEventListener("click",()=>{
     const cur=document.documentElement.getAttribute("data-theme");
-    const next = cur==="dark" ? "light"
-      : cur==="light" ? "dark"
+    const next = cur==="dark" ? "light" : cur==="light" ? "dark"
       : (window.matchMedia&&window.matchMedia("(prefers-color-scheme:dark)")
          .matches ? "light" : "dark");
     document.documentElement.setAttribute("data-theme",next);
@@ -767,14 +935,16 @@ $("#reset").addEventListener("click",()=>{
 })();
 
 $("#foot").innerHTML="Analysis tooling, not investment advice. This page computes the mean-variance frontier from the expected returns and volatilities you enter; those are assumptions, not forecasts, and the output is only as good as they are. Expected returns in particular are estimated with enormous error — Merton (1980) showed that pinning one down to useful precision takes decades of data, while a covariance converges in months — and mean-variance optimisation amplifies that error rather than absorbing it. Nothing here is a recommendation to buy or sell any security.";
+drawProfiles();
 drawAssets();
 render();
 
 // Exposed so test_frontier_page.py can cross-check these numbers against
-// finmodel/quant/portfolio.py. Two implementations of one formula drift.
-window.__model={inv,geometry,volAt,returnAtVol,maxSharpe,
-                gmvPortfolio,targetReturn,tangency,frontier,stats,
-                diagnose,conditionNumber};
+// finmodel/quant/. Two implementations of one formula drift.
+window.__model={inv,geometry,volAt,returnAtVol,maxSharpe,gmvPortfolio,
+                targetReturn,tangency,frontier,stats,diagnose,
+                conditionNumber,calVolForLoss,forInvestor,RISK_PROFILES,Z95};
+
 
 </script>
 </body>

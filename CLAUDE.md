@@ -142,6 +142,52 @@ and `from finmodel.quant import Universe, MarkowitzOptimizer, risk_report, ...`.
   moves risk, never the reward-to-risk ratio. If a complete portfolio ever
   reports a different Sharpe from its tangency portfolio, the weights and the
   cash position have gone out of sync.
+- **Over h periods the mean scales with h and the volatility with sqrt(h).**
+  `risk_report` used to scale the whole quantile by sqrt(h), which inflates
+  the mean term. At h=1 the two are identical, which is why every one-day
+  test passed; at the Basel 10-day horizon it overstated VaR by about half a
+  percentage point of portfolio value. `test_risk.py` checks h=1,5,10,20
+  against the closed form AND against genuinely aggregated h-day returns.
+- **A VaR number is worthless without a backtest, and there are two separate
+  ways it fails.** `backtest_var` re-estimates on a rolling window so every
+  breach is out of sample, then runs Kupiec (coverage: are there about
+  (1-c) breaches?) and Christoffersen (independence: do breaches cluster?).
+  They catch different things. On simulated GARCH data every estimator gets
+  the breach COUNT right and every one fails independence — the model has
+  the right average and the wrong timing, which no comparison of VaR
+  magnitudes can reveal. Never report a VaR comparison table without it.
+- **Sizing a portfolio to a loss tolerance must account for the cash leg.**
+  `volatility_for_loss_tolerance` answers the fully-invested question,
+  sigma = (L + mu)/|z|. On the CAL the blend earns less than the risky fund
+  when cash is held, so using the tangency return overshoots: an 8%
+  tolerance delivered an 11% bad year. `cal_volatility_for_loss_tolerance`
+  solves it jointly, sigma = (L + rf)/(|z| - Sharpe), which depends on the
+  risky fund only through its Sharpe ratio. The error flips sign at y=1 —
+  levered investors undershoot — but the overshoot half covers every profile
+  conservative enough to hold cash, which is the default.
+- **Conditioning on the panel's own average return does NOT measure
+  "correlation in a crash".** Selecting the worst days by the cross-sectional
+  mean conditions on the sum of the series, which forces the components apart
+  within the selected sample. On simulated data with the true correlation
+  pinned at 0.35 that method reports 0.27 calm and 0.06 "stress" — an
+  apparent collapse in diversification that is pure selection. This was
+  written, measured, and removed. `exceedance_correlation` conditions each
+  pair on BOTH series breaching a threshold and benchmarks the result against
+  a Gaussian copula at the same full-sample correlation, so the reported
+  `excess_lower` is the dependence a normal distribution cannot explain.
+  Calibrated: Gaussian data gives |excess| < 0.07, a Clayton copula gives
+  +0.43 with strong downside asymmetry.
+- **Correlation estimates on log returns, portfolios aggregate simple
+  returns.** log(1 + w'R) != w'log(1 + R). The two correlations agree to
+  about 0.001 at daily frequency so estimating on log returns is fine, but
+  the covariance handed to the optimiser must pair with an arithmetic mean.
+  `prepare_returns(kind=...)` makes the choice explicit.
+- **A correlation matrix must be PSD before it is inverted.**
+  `DataFrame.corr()` deletes pairwise, so cells can come from different
+  samples and the matrix can describe no possible set of assets.
+  `correlation_matrix(repair=True)` clips negative eigenvalues and restores
+  the unit diagonal rather than letting an optimiser return confident
+  nonsense.
 - **Portfolio position and sector caps are satisfied JOINTLY**, by alternating
   until both hold (portfolio_builder._enforce_constraints). Applying them in
   sequence lets sector redistribution push a position back over its cap — this
