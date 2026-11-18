@@ -406,7 +406,17 @@ class FrontierGeometry:
         """
         disc = self.b ** 2 - self.a * (self.c - self.d * volatility ** 2)
         if disc < 0:
-            return None
+            # At exactly the global minimum-variance volatility the
+            # discriminant is analytically zero, so floating point lands it a
+            # few ulp either side depending on the BLAS build. Treating a tiny
+            # negative value as "no portfolio reaches this volatility" made
+            # diagnose() return None for the GMV portfolio itself on some
+            # machines and a clean 0.0 on others. Snap the vertex to zero and
+            # reject only genuinely unreachable volatilities.
+            if disc > -_TOL * max(self.b ** 2, 1.0):
+                disc = 0.0
+            else:
+                return None
         return (self.b + math.sqrt(disc)) / self.a
 
     def is_efficient(self, target_return: float) -> bool:

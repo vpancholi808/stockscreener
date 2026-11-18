@@ -360,8 +360,15 @@ const maxSharpe=(g,rf)=>Math.sqrt(Math.max(g.c-2*rf*g.b+rf*rf*g.a,0));
 // minimum-variance portfolio's, so a lower one returns null: no portfolio of
 // these assets reaches it, and only a cash position can sit there.
 function returnAtVol(g,v){
-  const disc=g.b*g.b-g.a*(g.c-g.d*v*v);
-  return disc<0 ? null : (g.b+Math.sqrt(disc))/g.a;
+  let disc=g.b*g.b-g.a*(g.c-g.d*v*v);
+  if(disc<0){
+    // Analytically zero at the minimum-variance volatility, so floating
+    // point lands it either side of zero. Snap the vertex rather than
+    // claiming no portfolio reaches that risk.
+    if(disc>-TOL*Math.max(g.b*g.b,1)) disc=0;
+    else return null;
+  }
+  return (g.b+Math.sqrt(disc))/g.a;
 }
 
 function stats(w,mu,S,rf){

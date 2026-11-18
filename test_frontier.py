@@ -245,9 +245,25 @@ print("\n7) DIAGNOSING A HELD PORTFOLIO")
 # A portfolio already on the frontier must report no gap; one on the CAL must
 # report no Sharpe shortfall. Everything else must report a non-negative gap,
 # because the frontier is a bound.
+# The discriminant of sigma^2(r) is analytically zero at the GMV
+# volatility, so floating point puts it either side of zero depending on the
+# BLAS build. It used to be read as "no portfolio reaches this volatility",
+# which made diagnosing the minimum-variance portfolio return None on some
+# machines and 0.0 on others.
+check(f"the frontier is reachable at its own vertex "
+      f"({geo.return_at_volatility(geo.gmv_volatility)})",
+      geo.return_at_volatility(geo.gmv_volatility) is not None)
+check("and the vertex returns the GMV return",
+      abs((geo.return_at_volatility(geo.gmv_volatility) or -1)
+          - geo.gmv_return) < 1e-9)
+check("a volatility genuinely below the vertex is still rejected",
+      geo.return_at_volatility(geo.gmv_volatility * 0.9) is None)
+
 d_gmv = opt.diagnose(gmv.weights)
-check(f"a frontier portfolio shows no return gap ({d_gmv.return_gap:.2e})",
-      d_gmv.return_gap < 1e-9 and d_gmv.is_efficient)
+check("diagnosing the GMV portfolio yields a number, not None",
+      d_gmv.return_gap is not None)
+check(f"a frontier portfolio shows no return gap ({d_gmv.return_gap or 0:.2e})",
+      (d_gmv.return_gap or 0) < 1e-9 and d_gmv.is_efficient)
 check(f"and no volatility gap ({d_gmv.volatility_gap:.2e})",
       d_gmv.volatility_gap < 1e-9)
 check(f"but does fall short of the CAL ({d_gmv.sharpe_gap:.4f})",
