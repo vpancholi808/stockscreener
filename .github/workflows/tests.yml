@@ -45,16 +45,31 @@ jobs:
 
       - name: Run all suites
         run: |
-          set -e
+          # Each suite's failure goes out as an annotation as well as to the
+          # log, because the log archive host is not reachable from every
+          # environment this gets read from while the annotations API is.
+          # Without this a red run says only "exit code 1".
+          failed=""
           for t in test_pipeline test_capm test_dcf test_quant test_stoch \
                    test_foundation test_screener test_web test_valuation \
                    test_streamlit test_yahoo test_returns test_performance \
                    test_edgar test_profiles test_concepts test_frontier \
                    test_frontier_page test_correlation test_risk; do
             echo "::group::$t"
-            python -W ignore $t.py
+            if python -W ignore "$t.py" > "/tmp/$t.log" 2>&1; then
+              tail -2 "/tmp/$t.log"
+            else
+              failed="$failed $t"
+              cat "/tmp/$t.log"
+              echo "::error::$t failed -- $(grep -E 'FAIL|Error|error:' \
+                "/tmp/$t.log" | tail -6 | tr '\n' ' ' | cut -c1-1200)"
+            fi
             echo "::endgroup::"
           done
+          if [ -n "$failed" ]; then
+            echo "::error::suites that failed:$failed"
+            exit 1
+          fi
 
   frontend:
     runs-on: ubuntu-latest

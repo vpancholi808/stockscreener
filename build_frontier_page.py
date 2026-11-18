@@ -238,6 +238,16 @@ BODY = r"""
           <b id="lossv">15%</b></label>
         <input type="range" id="loss" min="3" max="60" step="1" value="15">
       </div>
+      <div class="row" style="margin-top:14px">
+        <label for="amount" style="font-size:12.5px;color:var(--muted)">
+          Amount to invest</label>
+        <select id="cur" class="btn" aria-label="Currency">
+          <option>$</option><option>&pound;</option><option>&euro;</option>
+          <option>&#8377;</option><option>&yen;</option>
+        </select>
+        <input type="number" id="amount" value="10000" min="100" step="1000"
+               style="width:96px" aria-label="Amount to invest">
+      </div>
       <label class="toggle"><input type="checkbox" id="lev">
         Allow borrowing to reach the target</label>
       <p class="note" id="profnote"></p>
@@ -270,6 +280,7 @@ BODY = r"""
   </aside>
 
   <main>
+    <section class="glass card" id="plain"></section>
     <div class="tiles" id="stats"></div>
     <div id="alert"></div>
     <section class="glass card chartbox" id="chart"></section>
@@ -490,12 +501,65 @@ const pct=(x,d)=>{
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",
   ">":"&gt;",'"':"&quot;"}[c]));
 
+// Percentages are precise; money is what people picture. Every figure on
+// this page is shown both ways.
+const cur=()=>$("#cur").value;
+const amount=()=>Math.max(+$("#amount").value||0,0);
+const money=v=>{
+  if(v===null||v===undefined||!isFinite(v)) return "—";
+  const a=Math.abs(v);
+  return (v<0?"−":"")+cur()+
+    a.toLocaleString(undefined,{maximumFractionDigits:a<100?2:0});
+};
+
+// The answer in a sentence, before any chart. Someone who reads only this
+// block should still know what to do and what it could cost them.
+function drawPlain(a,dg){
+  if(!a){$("#plain").innerHTML="";return;}
+  const amt=amount();
+  let h='<h3>What this means</h3><p style="margin:0;font-size:15.5px">';
+  if(amt>0){
+    h+='Of your <b>'+money(amt)+'</b>, put <b>'+money(a.y*amt)+'</b> ('+
+       pct(a.y,0)+') into the mix below';
+    h+= a.cash>0.0005
+      ? ' and leave <b>'+money(a.cash*amt)+'</b> ('+pct(a.cash,0)+
+        ') in cash.'
+      : (a.cash<-0.0005
+         ? ' — which means borrowing <b>'+money(-a.cash*amt)+
+           '</b> on top of what you have.' : '.');
+    h+=' In a typical year that grows by about <b>'+money(a.r*amt)+'</b> ('+
+       pct(a.r)+'). In a bad year — roughly one year in twenty — you '+
+       'could be down about <b>'+money(a.delivered*amt)+'</b> ('+
+       pct(a.delivered)+').</p>';
+  } else {
+    h+='Put '+pct(a.y,0)+' into the mix below and keep '+pct(a.cash,0)+
+       ' in cash. A typical year returns about '+pct(a.r)+'; a bad year, one '+
+       'in twenty, loses about '+pct(a.delivered)+'.</p>';
+  }
+  if(dg&&dg.returnGap!==null&&dg.returnGap>1e-4){
+    h+='<p class="note">The portfolio you hold today is not on the frontier: '+
+       'at the risk it already carries it gives up <b>'+pct(dg.returnGap)+
+       '</b> a year'+(amt>0?' — about '+money(dg.returnGap*amt)+
+       ' on this amount':'')+'. The trades that fix it are below.</p>';
+  }
+  h+='<details><summary>How to read the chart</summary><p class="note">'+
+     'Every dot is a portfolio: risk across, reward up. The grey curve is '+
+     'the best return available at each level of risk — nothing can sit '+
+     'above it. The blue line is what becomes possible once you can also '+
+     'hold cash or borrow, and it beats the curve everywhere except where '+
+     'they touch. Your target sits on that line, at the risk you chose.'+
+     '</p></details>';
+  $("#plain").innerHTML=h;
+}
+
 function drawProfiles(){
+  const amt=amount();
   $("#profiles").innerHTML=RISK_PROFILES.map(p=>
     '<button class="prof" type="button" data-p="'+p.key+'" aria-pressed="'+
     (p.key===profileKey)+'"><span style="flex:1"><b>'+p.label+'</b>'+
-    '<em>'+p.note+'</em></span><span>&minus;'+(p.loss*100).toFixed(0)+
-    '%</span></button>').join("");
+    '<em>'+p.note+'</em></span><span>&minus;'+(p.loss*100).toFixed(0)+'%'+
+    (amt>0?'<em style="text-align:right">'+money(p.loss*amt)+'</em>':'')+
+    '</span></button>').join("");
 }
 
 function drawAssets(){
@@ -578,6 +642,7 @@ function render(){
     $("#alert").innerHTML="";
   }
 
+  drawPlain(alloc,dg);
   drawStats(alloc,tan,gmv,loss);
   drawChart(g,gmv,tan,curve,mu,sd,rf,dg,alloc);
   drawAllocation(alloc,rf,loss,lev);
@@ -605,17 +670,19 @@ function drawStats(a,tan,gmv,loss){
   }
   const miss=Math.abs(a.delivered-a.loss)>1e-6;
   $("#stats").innerHTML=
-    tile("Expected return",pct(a.r),
-         (a.r-gmv.r>0?"+":"")+pct(a.r-gmv.r)+" vs min-variance",
-         a.r>=gmv.r?"good":"bad")+
-    tile("Volatility",pct(a.v),
-         a.capped?"capped at fully invested":"budget "+pct(a.budget),
+    tile("In a typical year",pct(a.r),
+         amount()>0?money(a.r*amount())+" on "+money(amount())
+                   :"expected return","good")+
+    tile("In a bad year","−"+pct(a.delivered),
+         miss?"you asked for "+pct(a.loss,0)
+            :(amount()>0?money(a.delivered*amount())+" at risk"
+                        :"exactly as asked"), miss?"warn":"good")+
+    tile("Year-to-year swing",pct(a.v),
+         a.capped?"capped at fully invested"
+                 :"volatility, budget "+pct(a.budget),
          a.capped?"warn":"")+
-    tile("Sharpe ratio",a.sharpe.toFixed(3),
-         "best available "+tan.sharpe.toFixed(3),"good")+
-    tile("Bad year (1 in 20)","−"+pct(a.delivered),
-         miss?"you asked for "+pct(a.loss,0):"exactly what you asked for",
-         miss?"warn":"good");
+    tile("Reward per unit of risk",a.sharpe.toFixed(2),
+         "Sharpe ratio, best is "+tan.sharpe.toFixed(2),"good");
 }
 
 function drawAllocation(a,rf,loss,lev){
@@ -653,6 +720,13 @@ function drawAllocation(a,rf,loss,lev){
      'differs only in how much of it they hold. That is Tobin’s '+
      'two-fund separation: your risk tolerance sets the cash weight, not the '+
      'stock picks.</p>';
+  if(a.w.some(x=>x<-1e-6)){
+    h+='<p class="note"><b>A negative weight means short selling</b> — '+
+       'betting the asset falls. Most people cannot or would not do that. If '+
+       'that is you, remove the asset from the table, or raise its expected '+
+       'return if you think the figure is too pessimistic. The optimiser is '+
+       'only ever repeating the numbers you gave it.</p>';
+  }
   $("#allocation").innerHTML=h;
 }
 
@@ -938,11 +1012,15 @@ $("#reset").addEventListener("click",()=>{
   rows=DEFAULT.map(r=>Object.assign({},r));
   profileKey="moderate";
   $("#rho").value=0.35; $("#rf").value=2; $("#loss").value=15;
-  $("#lev").checked=false;
+  $("#lev").checked=false; $("#amount").value=10000;
+  $("#cur").value="$";
   drawProfiles(); drawAssets(); render();
 });
 ["rho","rf"].forEach(id=>$("#"+id).addEventListener("input",render));
 $("#lev").addEventListener("change",render);
+["amount","cur"].forEach(id=>$("#"+id).addEventListener("input",()=>{
+  drawProfiles(); render();
+}));
 
 // The site build carries its own theme toggle; the Artifact build does not,
 // because there the host sets data-theme and a second control would fight it.
