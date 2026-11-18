@@ -5,11 +5,15 @@
 # "Secrets" box of your Streamlit Cloud app settings.
 
 [theme]
+# The glass theme in finmodel/web/theme.py paints the real surfaces, and it
+# needs to show through Streamlit's own. These values are what remains
+# visible around it — chiefly the chrome Streamlit draws before the injected
+# CSS applies, so they match the light palette rather than fighting it.
 base = "light"
-primaryColor = "#1f4e5f"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f4f6f7"
-textColor = "#15232b"
+primaryColor = "#1c6a86"
+backgroundColor = "#e9edf2"
+secondaryBackgroundColor = "#dfe6ec"
+textColor = "#152430"
 font = "sans serif"
 
 [browser]
