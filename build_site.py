@@ -121,46 +121,87 @@ TEMPLATE = """<!doctype html>
 <title>__TITLE__</title>
 <meta name="description" content="Equity health screening computed from SEC filings.">
 <style>
+/* Same design system as frontier.html: frosted panels over a fixed gradient
+   mesh, cool and bright in light mode, warm and deep in dark. Every colour is
+   a token so both themes are designed rather than inverted. */
 :root{
-  --bg:#ffffff; --panel:#f6f8f9; --line:#dfe5e8; --ink:#15232b;
-  --muted:#5d727e; --accent:#1f4e5f; --good:#2f7d5d; --bad:#a8402f;
-  --bar:#cfe0e4;
+  --base:#e9edf2;
+  --m1:rgba(120,170,210,.55); --m2:rgba(190,150,215,.40);
+  --m3:rgba(240,185,140,.45); --m4:rgba(130,205,195,.38);
+  --glass:rgba(255,255,255,.58); --glass-2:rgba(255,255,255,.88);
+  --edge:rgba(255,255,255,.80); --border:rgba(20,34,44,.12);
+  --ink:#152430; --muted:#5a7180; --faint:#8699a6;
+  --accent:#1c6a86; --accent-soft:rgba(28,106,134,.12);
+  --good:#2c7a5a; --bad:#a63f2e; --bar:rgba(28,106,134,.18);
+  --shadow:0 10px 34px rgba(14,26,36,.12);
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
-    --bg:#10181c; --panel:#162027; --line:#26343c; --ink:#e6eef2;
-    --muted:#93a8b3; --accent:#7fc3d6; --good:#5fbf92; --bad:#e08b7a;
-    --bar:#24414c;
+    --base:#0a1014;
+    --m1:rgba(40,95,125,.55); --m2:rgba(95,60,120,.42);
+    --m3:rgba(165,95,45,.45); --m4:rgba(30,110,100,.38);
+    --glass:rgba(26,36,44,.56); --glass-2:rgba(18,26,33,.92);
+    --edge:rgba(255,255,255,.12); --border:rgba(255,255,255,.11);
+    --ink:#e7eff4; --muted:#93a9b6; --faint:#6f8593;
+    --accent:#6ec2d8; --accent-soft:rgba(110,194,216,.14);
+    --good:#58bd8f; --bad:#e08d7b; --bar:rgba(110,194,216,.22);
+    --shadow:0 10px 34px rgba(0,0,0,.42);
+    color-scheme:dark;
   }
 }
 :root[data-theme="dark"]{
-  --bg:#10181c; --panel:#162027; --line:#26343c; --ink:#e6eef2;
-  --muted:#93a8b3; --accent:#7fc3d6; --good:#5fbf92; --bad:#e08b7a;
-  --bar:#24414c;
+  --base:#0a1014;
+  --m1:rgba(40,95,125,.55); --m2:rgba(95,60,120,.42);
+  --m3:rgba(165,95,45,.45); --m4:rgba(30,110,100,.38);
+  --glass:rgba(26,36,44,.56); --glass-2:rgba(18,26,33,.92);
+  --edge:rgba(255,255,255,.12); --border:rgba(255,255,255,.11);
+  --ink:#e7eff4; --muted:#93a9b6; --faint:#6f8593;
+  --accent:#6ec2d8; --accent-soft:rgba(110,194,216,.14);
+  --good:#58bd8f; --bad:#e08d7b; --bar:rgba(110,194,216,.22);
+  --shadow:0 10px 34px rgba(0,0,0,.42);
+  color-scheme:dark;
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
+body{margin:0;background:var(--base);color:var(--ink);
   font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,
   "Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%}
-.wrap{max-width:1500px;margin:0 auto;padding:0 16px}
-header{border-bottom:1px solid var(--line);padding:26px 0 18px}
+.mesh{position:fixed;inset:-20%;z-index:-1;pointer-events:none;
+  filter:blur(70px) saturate(130%);
+  background:
+    radial-gradient(38% 42% at 12% 18%, var(--m1) 0%, transparent 70%),
+    radial-gradient(34% 38% at 86% 12%, var(--m2) 0%, transparent 70%),
+    radial-gradient(42% 46% at 78% 82%, var(--m3) 0%, transparent 72%),
+    radial-gradient(36% 40% at 22% 88%, var(--m4) 0%, transparent 70%);}
+.glass,.scroll,.tools,header,.stat,dialog,footer{
+  background:var(--glass);
+  -webkit-backdrop-filter:blur(22px) saturate(150%);
+  backdrop-filter:blur(22px) saturate(150%);
+  border:1px solid var(--border);border-radius:18px;
+  box-shadow:var(--shadow),inset 0 1px 0 var(--edge)}
+.wrap{max-width:1500px;margin:0 auto;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:18px 40px}
+header{padding:20px 22px 18px;margin-bottom:14px}
 h1{margin:0 0 4px;font-size:26px;letter-spacing:-.02em}
 .sub{color:var(--muted);margin:0 0 10px;max-width:70ch}
-.nav{margin:0 0 16px}
+.nav{margin:0 0 14px}
 .nav a{color:var(--accent);text-decoration:none;font-size:14px}
 .nav a:hover{text-decoration:underline}
-.stats{display:flex;flex-wrap:wrap;gap:26px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:12px;margin-top:14px}
+.stat{padding:12px 15px}
 .stat b{display:block;font-size:24px;font-variant-numeric:tabular-nums}
-.stat span{color:var(--muted);font-size:12px;text-transform:uppercase;
-  letter-spacing:.06em}
+.stat span{color:var(--faint);font-size:11px;text-transform:uppercase;
+  letter-spacing:.07em}
 .tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center;
-  padding:14px 0;border-bottom:1px solid var(--line);position:sticky;top:0;
-  background:var(--bg);z-index:5}
-input,select,button{font:inherit;color:inherit;background:var(--panel);
-  border:1px solid var(--line);border-radius:7px;padding:7px 10px}
+  padding:12px 14px;position:sticky;top:10px;z-index:5;margin-bottom:12px}
+input,select,button{font:inherit;color:inherit;background:var(--glass-2);
+  border:1px solid var(--border);border-radius:10px;padding:7px 10px}
 input[type=search]{min-width:220px;flex:1 1 220px}
 button{cursor:pointer}
 button:hover{border-color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 label.chk{display:flex;align-items:center;gap:6px;color:var(--muted);
   font-size:14px;cursor:pointer}
 .count{color:var(--muted);font-size:14px;margin-left:auto}
@@ -169,30 +210,33 @@ label.chk{display:flex;align-items:center;gap:6px;color:var(--muted);
    so a page-level sticky header there lands behind the first row. Giving the
    panel its own vertical scroll makes the header stick where it should, and
    a fixed header is what you want for 500 rows anyway. */
-.scroll{overflow:auto;max-height:calc(100vh - 230px);
-  border:1px solid var(--line);border-radius:10px}
+.scroll{overflow:auto;max-height:calc(100vh - 260px);padding:2px}
 table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
 th,td{padding:7px 10px;text-align:right;white-space:nowrap;
-  border-bottom:1px solid var(--line);font-size:14px}
+  border-bottom:1px solid var(--border);font-size:14px}
 th:nth-child(-n+3),td:nth-child(-n+3){text-align:left}
-th{position:sticky;top:0;background:var(--bg);cursor:pointer;
-  font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;
-  letter-spacing:.05em;user-select:none;z-index:4}
+/* The sticky header sits over scrolling rows, so it needs an opaque fill of
+   its own: a translucent one lets the rows read straight through it. */
+th{position:sticky;top:0;background:var(--glass-2);
+  -webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);
+  cursor:pointer;font-weight:600;color:var(--muted);font-size:11.5px;
+  text-transform:uppercase;letter-spacing:.06em;user-select:none;z-index:4}
 th:hover{color:var(--ink)}
 th.sorted::after{content:"\\00a0▾";font-size:10px}
 th.sorted.asc::after{content:"\\00a0▴"}
 tbody tr{cursor:pointer}
-tbody tr:hover{background:var(--panel)}
+tbody tr:hover{background:var(--accent-soft)}
 td.tick{font-weight:600}
 .bar{display:block;height:5px;border-radius:3px;background:var(--bar);
   position:relative;min-width:54px}
 .bar i{position:absolute;inset:0 auto 0 0;background:var(--accent);
   border-radius:3px}
 .pos{color:var(--good)} .neg{color:var(--bad)}
-dialog{border:1px solid var(--line);border-radius:12px;background:var(--bg);
-  color:var(--ink);max-width:880px;width:calc(100% - 32px);padding:0}
-dialog::backdrop{background:rgba(0,0,0,.45)}
-.dh{padding:20px 22px 14px;border-bottom:1px solid var(--line);
+dialog{color:var(--ink);max-width:880px;width:calc(100% - 32px);padding:0;
+  background:var(--glass-2)}
+dialog::backdrop{background:rgba(0,0,0,.45);
+  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.dh{padding:20px 22px 14px;border-bottom:1px solid var(--border);
   display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
 .db{padding:18px 22px 24px;max-height:70vh;overflow:auto}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
@@ -200,22 +244,25 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .grid div b{display:block;font-size:17px;font-variant-numeric:tabular-nums}
 .grid div span{color:var(--muted);font-size:12px}
 h3{font-size:13px;text-transform:uppercase;letter-spacing:.06em;
-  color:var(--muted);margin:22px 0 8px}
+  color:var(--faint);margin:22px 0 8px}
 .mini{width:100%;font-size:13px}
 .mini td,.mini th{padding:5px 8px}
-footer{border-top:1px solid var(--line);margin-top:32px;padding:20px 0 40px;
-  color:var(--muted);font-size:13px}
+footer{margin-top:16px;padding:18px 22px 22px;color:var(--muted);
+  font-size:13px}
 footer p{max-width:85ch}
 details{margin:10px 0}
 summary{cursor:pointer;color:var(--accent)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;
+  transition:none!important}}
 @media (max-width:700px){
-  .stats{gap:16px}.stat b{font-size:19px}h1{font-size:21px}
-  .scroll{max-height:calc(100vh - 300px)}
+  .stat b{font-size:19px}h1{font-size:21px}
+  .scroll{max-height:calc(100vh - 330px)}
   input[type=search]{min-width:140px}
 }
 </style>
 </head>
 <body>
+<div class="mesh" aria-hidden="true"></div>
 <div class="wrap">
 <header>
   <h1>__TITLE__</h1>
