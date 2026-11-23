@@ -64,6 +64,8 @@ finmodel/
   quant/stochastic.py  Brownian/GBM/OU/jump-diffusion/Heston simulators + Euler-Maruyama
   quant/rates.py       Vasicek & CIR short-rate models (analytic ZCB + simulation)
   quant/credit.py      Merton structural credit (equity as call on assets)
+  quant/montecarlo.py  multivariate path simulation (normal/t/bootstrap/block),
+                       MC VaR + ES with simulation error
   web/store.py         DB layer; DATABASE_URL picks sqlite (dev) or postgres (prod)
   web/schema.sql       Postgres DDL (SQLITE_DDL in store.py mirrors it)
   web/loader.py        ThreeStatementModel -> DB rows; the scheduled worker's core
@@ -213,6 +215,92 @@ monthly returns, 5y lookback. **Set rf and ERP deliberately each run.**
 DCF (`DcfConfig`): terminal_growth 2.5%, Gordon method (or exit_ev_ebitda 10×),
 mid-year on, tax inferred from history. **terminal_growth must be < WACC.**
 
+## Monte Carlo (quant/montecarlo.py)
+
+A Gaussian Monte Carlo VaR is a slow parametric VaR. The simulation earns
+its cost only through the three things the closed form cannot do: fat tails
+and empirical dependence (`t`, `bootstrap`, `block`), path-dependent
+statistics (drawdown, probability of ruin, barrier crossings), and an
+honest error bar on the answer. Tested by `test_montecarlo.py`, offline.
+
+- **Simulate in log space, and adjust the drift.** The generator is handed
+  `m = ln(1 + mu/k) - s²/2`, so the ARITHMETIC mean of the simple returns
+  lands on `mu/k`. Feeding `mu` straight in understates every expected
+  return by half a variance — invisible daily, percentage points a year.
+  Log space is also what keeps wealth positive: a normal simple return can
+  be below -100%, which is a share price through zero.
+- **A single asset compounds to an exactly lognormal wealth**, so there is
+  a closed form to hit at every horizon:
+  `VaR_α = -(exp(h·m + z_α·s·√h) - 1)`. The suite checks it at h = 1, 5,
+  10, 20, 60 and 252 days. Nothing else in the suite is this strict, and it
+  pins the drift adjustment, the log construction and the horizon
+  arithmetic together.
+- **Beyond one day the parametric VaR OVERSTATES the loss, and that is not
+  a bug in either.** Compounding is multiplicative, so the horizon return
+  is right-skewed and its left tail is thinner than a normal with the same
+  mean and variance. Measured on the test portfolio: +0.10pp at 10 days,
+  +0.34pp at 60, +0.63pp at 252. At h=1 the two coincide, which is why that
+  is where the wiring check lives. Do not "fix" the gap by asserting
+  agreement at long horizons — that asserts the engine shares the
+  shortcut's flaw.
+- **Fat tails do NOT raise VaR at every confidence level.** Holding
+  variance fixed, the mass a Student-t puts in the extreme tails comes out
+  of its shoulders, so inside the crossover the t quantile is *closer* to
+  the mean. On the test portfolio the crossover sits between 95% and 97.5%:
+
+  ```
+  conf    normal      t(5)     t - normal
+  0.900  0.01329   0.01182   -0.00147
+  0.950  0.01710   0.01616   -0.00094
+  0.975  0.02037   0.02062   +0.00025
+  0.990  0.02414   0.02692   +0.00279
+  ```
+
+  So switching to a fat-tailed model and reporting 95% VaR *lowers* the
+  number by about 6% and reads as a safer portfolio. The regulatory 99% is
+  past the crossover; the conventional 95% is not. Expected shortfall has
+  no crossover — it averages everything past the cut, so the extra tail
+  mass always shows up. That is the argument for reporting ES alongside
+  VaR, and the suite asserts the sign on both sides of the crossover.
+- **Student-t draws are rescaled by sqrt((df-2)/df)** so the target
+  covariance survives. Without it the "fat tail" is really a higher
+  volatility, which is a different claim. `df` floors at 2.5 (below 4 the
+  kurtosis does not exist, below 2 neither does the variance).
+- **The block bootstrap exists for autocorrelation and nothing else.**
+  Resampling single rows keeps the cross-sectional dependence and the
+  marginal tails exactly and destroys volatility clustering, which is the
+  failure that makes a one-day VaR pass and a ten-day VaR lie. The test
+  fixture must therefore be a real GARCH(1,1) recursion with the variance
+  feeding back on the realised shock; a first attempt drove it with an
+  independent noise term, which produced a series that looked
+  volatility-varying, had no autocorrelation in |r| at all, and let both
+  bootstraps pass the test meant to separate them.
+- **Antithetic sampling returns the REQUESTED path count**, half drawn and
+  half mirrored — it does not silently double it. The independent-draw
+  count is what the standard error scales on, so a path count that doubled
+  behind the caller's back would make every reported error optimistic. It
+  also does nothing for a statistic deep in one tail, so a 99% estimate is
+  no less noisy for it.
+- **Every quantile comes with its standard error**, `sqrt(p(1-p)/n)/f(q)`
+  with the density taken from the spacing of the order statistics. The same
+  path count gives a far noisier 99% VaR than 95%, because the density out
+  there is thinner. A VaR printed to four decimals off a thousand paths is
+  mostly noise, and the only way a reader can know is if the number carries
+  its error.
+- **`simulate_portfolio` generates in chunks of paths, and builds wealth in
+  place.** The asset cube is `n_assets` times larger than anything kept
+  from it: a year of daily steps on 200,000 paths and three assets is a
+  1.2 GB intermediate that collapses immediately to the portfolio returns
+  actually wanted. On a small container the process is OOM-killed first,
+  which hands the caller a dead process and no error to read. Chunking
+  bounds the intermediate at `CHUNK_CELLS` regardless of path count, and
+  `np.add(port, 1.0, out=...)` avoids the third full-size array that
+  `np.cumprod(1.0 + port, ...)` allocates for its temporary.
+- **A simulation is not evidence.** It reproduces whatever was assumed, so
+  `example_montecarlo.py` ends with `backtest_var` on the real series:
+  Kupiec for coverage, Christoffersen for independence. That is the only
+  section of a Monte Carlo report that can falsify a model.
+
 ## Testing
 
 ```bash
@@ -220,6 +308,8 @@ python test_pipeline.py   # 3-statement build, tag fallback, distressed case
 python test_capm.py       # beta recovery on synthetic data, WACC integration
 python test_dcf.py        # DCF recomputed independently + sensitivity monotonicity
 python test_quant.py      # BS textbook value + parity, optimizer, VaR=z·σ, factor ranks
+python test_montecarlo.py # exact lognormal quantile at 6 horizons, t crossover,
+                          # block-vs-iid autocorrelation, quantile stderr
 ```
 
 All tests are known-answer or analytic-identity checks on synthetic data and run

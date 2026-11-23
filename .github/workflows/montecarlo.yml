@@ -1,0 +1,80 @@
+name: monte carlo (live)
+
+# Run the Monte Carlo / VaR stack against real Yahoo data.
+#
+# This exists because the development sandbox reaches neither Yahoo nor
+# SEC, so a live run has to happen on a runner. Results go to workflow
+# annotations, which are readable through the API when log archives are
+# not.
+#
+# The offline suite (test_montecarlo.py) is the correctness check: it
+# holds the known-answer and analytic-identity tests. This workflow is
+# the plausibility check on real data — whether the tails, the breach
+# rates and the model disagreements look like a real security rather
+# than like a parsing error.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Tickers (space separated)"
+        required: false
+        default: "NVDA"
+      years:
+        description: "Years of daily history"
+        required: false
+        default: "5"
+      paths:
+        description: "Simulation paths"
+        required: false
+        default: "100000"
+      confidence:
+        description: "VaR confidence (0.95 or 0.99)"
+        required: false
+        default: "0.99"
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-core.txt
+
+      # The offline suite runs first. A live run whose engine is broken
+      # produces plausible-looking numbers and no error, so there is no
+      # point reading the live output until the identities hold.
+      - name: Offline known-answer suite
+        run: python test_montecarlo.py
+
+      - name: Live run
+        env:
+          TICKERS: ${{ github.event.inputs.tickers || 'NVDA' }}
+          YEARS: ${{ github.event.inputs.years || '5' }}
+          PATHS: ${{ github.event.inputs.paths || '100000' }}
+          CONF: ${{ github.event.inputs.confidence || '0.99' }}
+        run: |
+          python example_montecarlo.py $TICKERS \
+            --years "$YEARS" --paths "$PATHS" --confidence "$CONF"
+
+      # A single name cannot show the portfolio machinery, so a second
+      # pass runs a deliberately mixed basket: a high-beta semi, a
+      # megacap, a defensive and a bond proxy. If the correlation and
+      # diversification numbers there look like the single-name run,
+      # something is collapsing the panel.
+      - name: Live run (mixed basket)
+        if: success()
+        env:
+          PATHS: ${{ github.event.inputs.paths || '100000' }}
+        run: |
+          python example_montecarlo.py NVDA MSFT JNJ TLT \
+            --years 5 --paths "$PATHS" --confidence 0.99

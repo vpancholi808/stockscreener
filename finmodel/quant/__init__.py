@@ -4,8 +4,13 @@ from .portfolio import (CapitalAllocationLine, CompletePortfolio,
                         FrontierGeometry, MarkowitzOptimizer,
                         NoTangencyPortfolio, Portfolio,
                         PortfolioDiagnosis, ledoit_wolf_cov)
-from .risk import (RiskReport, risk_report, stress_test, historical_scenario,
-                   portfolio_returns)
+from .risk import (RiskReport, VarBacktest, backtest_var, risk_report,
+                   stress_test, historical_scenario, portfolio_returns,
+                   volatility_for_loss_tolerance,
+                   cal_volatility_for_loss_tolerance)
+from .montecarlo import (MODELS, MonteCarloVar, SimulationResult,
+                         monte_carlo_var, quantile_standard_error,
+                         simulate_asset_returns, simulate_portfolio)
 from .options import bs_price, bs_greeks, implied_vol, Greeks
 from .factors import FactorModel, company_factors
 from .stochastic import (brownian_motion, gbm, ornstein_uhlenbeck,
