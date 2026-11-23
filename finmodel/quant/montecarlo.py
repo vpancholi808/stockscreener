@@ -112,6 +112,18 @@ def simulate_asset_returns(
     `mu` and `cov` are annual, matching what the optimiser is given. Each
     step covers 1/`periods_per_year` of a year.
 
+    **`mu` must be the ARITHMETIC annual mean**, the per-period expectation
+    times the period count — not the geometric (compound) return. The two
+    differ by about sigma^2/2, which is 13 percentage points a year on a
+    52%-vol name, and passing the wrong one runs every path light by that
+    much. It does not raise; it returns a plausible distribution centred
+    in the wrong place. `returns.annualize_mean` DEFAULTS TO GEOMETRIC, so
+    callers must pass ``method="arithmetic"`` explicitly.
+
+    The identity that catches it: the median compound return of a
+    simulation must reproduce the geometric mean implied by its own inputs,
+    `(1+mu)*exp(-sigma^2/2) - 1`. `test_montecarlo.py` asserts it.
+
     `model`:
       * ``normal`` — correlated lognormal steps, drift-adjusted so the mean
         simple return is mu/k.

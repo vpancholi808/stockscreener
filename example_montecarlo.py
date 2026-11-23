@@ -148,12 +148,17 @@ def main() -> int:
     k = infer_periods_per_year(rets.index)
     say("inferred %d periods per year" % k)
 
-    ann_mu = annualize_mean(rets, k).astype(float)
+    # BOTH annualizations, because they answer different questions and the
+    # simulator wants a specific one. Geometric is the rate an investor
+    # actually earned; arithmetic is the per-period expectation the
+    # simulator's drift slot is defined in terms of.
+    geo_mu = annualize_mean(rets, k, method="geometric").astype(float)
+    ann_mu = annualize_mean(rets, k, method="arithmetic").astype(float)
     ann_vol = annualize_volatility(rets, k).astype(float)
     for t in rets.columns:
         r = rets[t].dropna()
-        say("%-6s mean %s  vol %s  skew %+.2f  exkurt %+.2f  n=%d"
-            % (t, pct(ann_mu[t]), pct(ann_vol[t]),
+        say("%-6s geo %s  arith %s  vol %s  skew %+.2f  exkurt %+.2f  n=%d"
+            % (t, pct(geo_mu[t]), pct(ann_mu[t]), pct(ann_vol[t]),
                float(r.skew()), float(r.kurtosis()), len(r)))
 
     # Excess kurtosis is a fourth moment, so one 12-sigma day contributes
@@ -177,18 +182,46 @@ def main() -> int:
 
     # ---------------------------------------------------------------- 3
     head("3. Simulation")
+    # ARITHMETIC, not geometric. annualize_mean defaults to geometric,
+    # and feeding that into the drift slot runs every path light by
+    # sigma^2/2 — 13 percentage points a year on a 52%-vol name. The
+    # symptom is subtle and reads as a modelling result rather than an
+    # error: the bootstraps resample realised returns and so carry the
+    # true arithmetic mean, so they come out ABOVE the normal paths, and
+    # the gap looks like fat tails adding return. A simulated median
+    # compound return must reproduce the geometric mean of its input;
+    # test_montecarlo.py asserts that identity.
+    #
     # Passed the whole frame, which returns a Series indexed by ticker. A
     # per-column dict comprehension instead stores one-element Series as
     # the VALUES, giving a Series of Series that only fails much later,
     # inside the simulator's .to_numpy().
-    mu = annualize_mean(rets, k).astype(float)
+    mu = annualize_mean(rets, k, method="arithmetic").astype(float)
     cov = rets.cov() * k
     w = pd.Series(1.0 / len(rets.columns), index=list(rets.columns))
 
     if len(w) > 1:
         say("equal weights, diversification ratio %.3f"
             % diversification_ratio(w, cov))
-    say("mu  %s" % ", ".join("%s %s" % (t, pct(mu[t], 1)) for t in mu.index))
+    say("mu (arithmetic) %s"
+        % ", ".join("%s %s" % (t, pct(mu[t], 1)) for t in mu.index))
+    say("geometric        %s"
+        % ", ".join("%s %s" % (t, pct(geo_mu[t], 1)) for t in geo_mu.index))
+
+    # Where the simulated median should land. This is the PORTFOLIO's
+    # implied geometric return, not an average of the per-asset ones: the
+    # portfolio's variance is w'Sigma w, which diversification makes
+    # smaller than any weighted average of the assets' variances, so its
+    # drag is smaller and its median higher than theirs. Printing the
+    # per-asset geometric column as the reference would misstate it by
+    # exactly the diversification benefit.
+    mu_p = float(w @ mu)
+    var_p = float(w @ cov @ w)
+    implied = math.exp(k * (math.log1p(mu_p / k) - 0.5 * var_p / k)) - 1.0
+    say("portfolio: arithmetic %s, vol %s -> implied median %s"
+        % (pct(mu_p, 1), pct(math.sqrt(var_p), 1), pct(implied, 1)))
+    say("  (the four medians below should bracket that; a systematic miss "
+        "means the drift slot got a geometric mean)")
     say("vol %s" % ", ".join("%s %s" % (t, pct(math.sqrt(cov.loc[t, t]), 1))
                              for t in mu.index))
 
@@ -257,6 +290,17 @@ def main() -> int:
         say("A REJECT on coverage means the level is wrong. CLUSTERED means "
             "the level is right and the timing is not — breaches arrive "
             "together, which is when losing twice in a week matters.")
+        # An OK on independence is weaker evidence than it looks. Measured
+        # on simulated GARCH data with genuine clustering, Christoffersen
+        # rejects in 7 of 12 trials at 95% and 4 of 12 at 99%: the test
+        # needs breach PAIRS, and at 99% over ~1000 days barely 0.1 are
+        # expected even under independence. So "OK" here means none was
+        # detected, not that none is there.
+        exp_pairs = len(port_hist) * (1 - args.confidence) ** 2
+        say("note: independence has ~%.0f%% power here — about %.1f breach "
+            "pairs are expected under independence, so an OK means none "
+            "was detected, not that none exists."
+            % (100 * (0.33 if args.confidence >= 0.99 else 0.58), exp_pairs))
 
     head("Reading this")
     say("MC-normal must agree with parametric: it is the wiring check, "

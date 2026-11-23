@@ -296,10 +296,43 @@ honest error bar on the answer. Tested by `test_montecarlo.py`, offline.
   bounds the intermediate at `CHUNK_CELLS` regardless of path count, and
   `np.add(port, 1.0, out=...)` avoids the third full-size array that
   `np.cumprod(1.0 + port, ...)` allocates for its temporary.
+- **`mu` is the ARITHMETIC annual mean, and `annualize_mean` defaults to
+  GEOMETRIC.** Passing the geometric return into the drift slot runs every
+  path light by about sigma^2/2 — 13 percentage points a year on a 52%-vol
+  name. It does not raise. It returns a plausible distribution centred in
+  the wrong place, and on real data it reads as a *modelling result*: the
+  bootstraps resample realised returns and so carry the true arithmetic
+  mean, so they come out ABOVE the normal paths and the gap looks like fat
+  tails adding return. The first live NVDA run showed exactly that
+  (+20.1% normal median against +32% bootstrap, +45.7% block); corrected,
+  all four land together and differ only in the tails. Callers must pass
+  `method="arithmetic"` explicitly.
+- **The identity that catches it: the median compound return must
+  reproduce the geometric mean implied by the inputs**,
+  `exp(k*(ln(1+mu/k) - sigma^2/(2k))) - 1`. For a PORTFOLIO that reference
+  uses `w'mu` and `w'Sigma w`, not an average of the per-asset geometric
+  returns — diversification makes the portfolio variance smaller than any
+  weighted average of the asset variances, so its drag is smaller and its
+  median higher. `example_montecarlo.py` prints the implied median next to
+  the four simulated ones so the output self-checks, and
+  `test_montecarlo.py` asserts the identity at 18% and 52% volatility.
+- **Note that the arithmetic mean is not always the larger of the two.**
+  At low volatility and high mean the convexity of compounding exceeds the
+  variance drag, so the geometric annualization comes out above the
+  arithmetic one. That is the same arithmetic `variance_drag` documents;
+  it is not a sign of the error above.
 - **A simulation is not evidence.** It reproduces whatever was assumed, so
   `example_montecarlo.py` ends with `backtest_var` on the real series:
   Kupiec for coverage, Christoffersen for independence. That is the only
   section of a Monte Carlo report that can falsify a model.
+- **A passing Christoffersen test is weak evidence, and weakest where it is
+  most often quoted.** The test needs breach PAIRS, and at 99% over ~1,000
+  days only about 0.1 are expected even under independence. Measured on
+  simulated GARCH data with genuine volatility clustering, it rejects in
+  7 of 12 trials at 95% and 4 of 12 at 99% — so "independence OK" at 99%
+  means none was detected, not that none is there. The example prints that
+  power caveat with the result rather than leaving a clean p=1.000 to be
+  read as a pass.
 
 ## Testing
 

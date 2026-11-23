@@ -47,6 +47,10 @@ def check(name, cond, detail=""):
         fails.append(name)
 
 
+def pct(x, nd=2):
+    return "%.*f%%" % (nd, 100 * float(x))
+
+
 ASSETS = ["A", "B", "C"]
 MU = pd.Series([0.08, 0.12, 0.05], index=ASSETS)
 SD = np.array([0.18, 0.30, 0.10])
@@ -80,6 +84,29 @@ got_corr = np.corrcoef(r.T)[np.triu_indices(3, 1)]
 check("correlation survives the Cholesky factor",
       np.allclose(got_corr, RHO, atol=0.01),
       "got %s vs %.2f" % (np.round(got_corr, 4), RHO))
+
+# The median compound return must reproduce the GEOMETRIC mean implied by
+# the inputs, (1+mu)*exp(-s^2/2) - 1. This is the identity that catches a
+# geometric mean passed into the arithmetic drift slot — the two differ by
+# about s^2/2, which is 13 percentage points a year on a 52%-vol name, and
+# the mistake does not raise. It returns a plausible distribution centred
+# in the wrong place, and on real data it reads as a modelling result
+# rather than an error: the bootstraps resample realised returns and so
+# carry the true arithmetic mean, so they come out ABOVE the normal paths
+# and the gap looks like fat tails adding return. Found exactly that way,
+# on a live 5-year NVDA run.
+for name, ann_mu, ann_sd in (("moderate", 0.08, 0.18), ("NVDA-like", 0.45, 0.52)):
+    one_cov = pd.DataFrame([[ann_sd ** 2]], index=["A"], columns=["A"])
+    sim = simulate_portfolio(pd.Series([ann_mu], index=["A"]), one_cov,
+                             pd.Series([1.0], index=["A"]),
+                             horizon_years=1.0, n_paths=120_000, seed=55)
+    got = float(np.median(sim.terminal) - 1.0)
+    # exp(h*m) with m the log drift, h = 1 year: the median of a lognormal
+    # is exp of its log-mean, with no variance term.
+    want = math.exp(252 * (math.log1p(ann_mu / 252) - 0.5 * (ann_sd ** 2) / 252)) - 1.0
+    check("%s: median compound %s matches the implied geometric mean %s"
+          % (name, pct(got), pct(want)),
+          abs(got - want) < 0.006, "gap %+.4f" % (got - want))
 
 # Simulating in log space is what keeps wealth positive. A normal simple
 # return can be below -100%, which is a share price through zero.
