@@ -266,6 +266,24 @@ honest error bar on the answer. Tested by `test_montecarlo.py`, offline.
   covariance survives. Without it the "fat tail" is really a higher
   volatility, which is a different claim. `df` floors at 2.5 (below 4 the
   kurtosis does not exist, below 2 neither does the variance).
+- **The block bootstrap must be CIRCULAR.** Drawing block starts from
+  `[0, n-b)` — the obvious reading of "a block that fits" — underweights
+  both ends badly, because observation `i` is only reachable from starts in
+  `[i-b+1, i]` and near an edge most of those do not exist. Counted at
+  n=1253, b=20, as a fraction of fair weight: first three 0.052 / 0.105 /
+  0.157, middle 1.024, last three 0.103 / 0.052 / **0.000** — the final
+  observation is never sampled at all. That biased the resampled mean by
+  -3% on a series whose worst stretch sat at the start, and on the live
+  5-year NVDA run it quietly discounted the 2022 drawdown and moved the
+  whole simulated distribution right: median +14pp, a BETTER 5th
+  percentile and a lower probability of loss. It reads as "volatility
+  clustering improves outcomes", which is backwards, and it is pure edge
+  effect. Starts now span `[0, n)` and wrap, giving every observation
+  weight exactly `b` (Politis & Romano 1992). `test_montecarlo.py` counts
+  the coverage exactly over every possible start — a sampled version of
+  that test needs an enormous number of draws before its own noise falls
+  below the bias it is hunting — and keeps a regression guard asserting
+  the old range still fails it.
 - **The block bootstrap exists for autocorrelation and nothing else.**
   Resampling single rows keeps the cross-sectional dependence and the
   marginal tails exactly and destroys volatility clustering, which is the

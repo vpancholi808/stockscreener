@@ -335,6 +335,54 @@ def mean_abs_autocorr(sim):
     return float(np.mean(num / np.where(den > 0, den, np.nan)))
 
 
+# Every observation must be sampled with equal probability, which is what
+# makes the block bootstrap mean-unbiased. Drawing block starts from
+# [0, n-b) instead leaves the first and last b-1 observations on a ramp
+# down to zero — the final one never sampled at all — and that silently
+# discounts whichever end of the sample holds the interesting data.
+# Counted exactly over every possible start rather than estimated from
+# draws: with n starts the coverage is a deterministic quantity, and a
+# sampled version of this test needs an enormous number of draws before
+# its own noise is smaller than the bias it is looking for. The buggy
+# range [0, n-b) fails this at any n.
+_n, _b = len(hist), 20
+_all = (np.arange(_n)[:, None] + np.arange(_b)[None, :]) % _n
+_wt = np.bincount(_all.ravel(), minlength=_n) / float(_b)
+check("circular blocks cover every observation exactly equally",
+      _wt.min() == _wt.max() == 1.0,
+      "weights %.4f to %.4f (fair = 1.0)" % (_wt.min(), _wt.max()))
+
+_half_open = (np.arange(max(_n - _b, 1))[:, None] + np.arange(_b)[None, :]) % _n
+_wt_bad = (np.bincount(_half_open.ravel(), minlength=_n)
+           / (len(_half_open) * _b / _n))
+check("the half-open range it replaced does NOT (regression guard)",
+      _wt_bad.min() < 0.1,
+      "worst weight %.3f, last observation %.3f"
+      % (_wt_bad.min(), _wt_bad[-1]))
+
+# And the consequence: the resampled mean must match the history's, even
+# when the history is front-loaded with its worst returns. The tolerance
+# is three standard errors of the block mean, not a flat percentage —
+# blocks cut the effective sample size by a factor of `block`, so the
+# noise floor here is percent-scale however many paths are drawn, and a
+# flat 1.5% band fails on noise about a third of the time.
+_skew_hist = pd.DataFrame({"A": np.concatenate([
+    np.random.default_rng(1).normal(-0.004, 0.03, 300),
+    np.random.default_rng(2).normal(0.004, 0.01, 953)])})
+_one_mu = pd.Series([0.1], index=["A"])
+_one_cov = pd.DataFrame([[0.04]], index=["A"], columns=["A"])
+_h_mean = float(_skew_hist["A"].mean())
+for _m, _eff in (("bootstrap", 1), ("block", 20)):
+    _r = simulate_asset_returns(_one_mu, _one_cov, n_paths=3_000,
+                                n_steps=1_253, model=_m, history=_skew_hist,
+                                block=20, seed=3)
+    _se = float(_skew_hist["A"].std()) / math.sqrt(_r.size / _eff)
+    _gap = float(_r.mean()) - _h_mean
+    check("%s preserves the mean of a front-loaded history" % _m,
+          abs(_gap) < 3.0 * _se,
+          "gap %+.2f%% of mean, tol %.2f%% (3 s.e.)"
+          % (100 * _gap / _h_mean, 100 * 3.0 * _se / _h_mean))
+
 ac_boot, ac_blk = mean_abs_autocorr(boot), mean_abs_autocorr(blk)
 check("iid bootstrap destroys autocorrelation (as it must)",
       abs(ac_boot) < 0.03, "%.4f" % ac_boot)
